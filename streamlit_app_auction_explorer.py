@@ -482,13 +482,16 @@ if table:
                      "Contract": final_contract(t.get("contract"), t.get("declarer")),
                      "Tricks": t.get("tricks") if result_of(t) else None, "Result": result_of(t),
                      f"Score for {my_side[0]}-{my_side[1]}": None if t.get("ns_score") is None else sign * t["ns_score"],
-                     "Auction shown above": "yes" if (t.get("player_id"), t["auction"]) == (table.get("player_id"), table["auction"]) else ""}
+                     "_chosen": (t.get("player_id"), t["auction"]) == (table.get("player_id"), table["auction"])}
                     for t in tables]
             score = f"Score for {my_side[0]}-{my_side[1]}"
             frame = pd.DataFrame(rows).sort_values(score, ascending=False, na_position="last").reset_index(drop=True)
+            chosen = frame.pop("_chosen").tolist()
             st.markdown(f"**All {len(frame)} tables on this board**, best score for {my_side[0]}-{my_side[1]} first. "
-                        f"The last column marks the table chosen in the sidebar ({table['name']}).")
-            st.dataframe(frame.style.format({score: "{:+.0f}", "Tricks": "{:.0f}"}, na_rep=""), width="stretch", hide_index=True,
+                        f"The colored row is the table chosen in the sidebar ({table['name']}).")
+            st.dataframe(frame.style.format({score: "{:+.0f}", "Tricks": "{:.0f}"}, na_rep="")
+                         .apply(lambda row: [f"background-color: rgba({BLUE}, 0.35)" if chosen[row.name] else ""] * len(row), axis=1),
+                         width="stretch", hide_index=True,
                          height=min(38 * (len(frame) + 1), 700))
             if truth:
                 st.caption(f"Real par for {my_side[0]}-{my_side[1]}: {sign * truth['par_score']:+d} ({truth.get('par', '')}).")
