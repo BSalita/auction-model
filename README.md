@@ -450,3 +450,40 @@ setting) is served by prod's BEN REST API since 2026-11-19 06:57. BEN code: comm
 Checks: the commit's tree started through prod's entrypoint in a test container gave the tested run's call on
 370 of 370 South positions; prod's public address on 60 of 60, among them all 40 where this setting and the
 Brill-network setting differ (0 of 40 before the deploy). A call takes 0.83 s at the median on prod (0.42 s before).
+
+## Explorer page (2026-11-19)
+
+`streamlit_app_auction_explorer.py` shows what the model believes from one seat, call by call: expected tricks
+by declarer and strain, the best contracts for each side, the par distribution and how it moved with each call,
+where the missing honors and suit lengths probably are, and the calls the purpose rules name. Pick a Brill board
+(the real deal is then shown next to every prediction) or enter a hand and an auction.
+
+- Local: `preview_start` name `auction-explorer` (port 8536; `elo/.venv`, PyTorch taken from `acbl-pipeline/.venv`).
+- Public: https://auction.7nt.info, a container of its own on prod. Publishing and what prod holds:
+  `ops/AUCTION_EXPLORER.md`, `ops/publish_auction_explorer.ps1`. The Brill boards on prod are as of the last publish.
+- Tested headlessly with `streamlit.testing.v1.AppTest`: every step of a 14-call auction, all four seats' tabs, own
+  deal, and the messages for a bad hand, a bad call and an illegal auction.
+
+## More Brill rows: `v1-brill-all` (2026-11-19)
+
+`ft3.sh` repeats the `v1-brill` recipe on more rows. `brill.npz` was rebuilt (10,197 rows to 18 November); the 151
+rows of 18 November (32 deals, `brill_new.npz`) are events no earlier model had seen.
+
+South's viewpoint on those 151 rows, before any call -> auction over:
+
+| Model | Trained on | Error of expected DD tricks | Error of expected par |
+|---|---|---|---|
+| `v1` | BBO only | 1.46 -> 1.08 | 287 -> 182 |
+| `v1-brill` | + Brill to 5 November | 1.46 -> 1.00 | 291 -> 158 |
+| `v1-brill-old` | + Brill to 17 November | 1.45 -> 1.01 | 290 -> 161 |
+| `v1-brill-all` | + Brill to 18 November (these rows too) | not a test: it was trained on them | |
+
+- The first check of the Brill fine-tuning on rows that played no part in choosing its recipe: it holds
+  (1.08 -> 1.00 tricks, 182 -> 158 par at the end of the auction), on 32 deals only.
+- Adding the 12 days of 6 to 17 November changes nothing that these rows can show.
+- On held-out BBO deals the three fine-tuned models are the same (DD error 1.205 against 1.190 for `v1`).
+- In BEN, on the 10,000 live deals (doubles and sacrifices, trust 0.2; 28 minutes with 48 workers, 25 new requests to
+  Brill's service): `v1-brill-all` against `v1-brill` -0.002 +-0.005 IMPs a deal, the auction differs on 16 deals
+  (7 better, 9 worse); against the baseline +0.046 +-0.019 (`v1-brill`: +0.048 +-0.019). The two models bid the same,
+  so prod keeps `v1-brill`. Replay `data\brill-replay\live\10k\tac-ds-all`, scores `live\10k-tac-report\vs-tac-ds-all`.
+- A retrain is worth repeating when it can be tested: hold the newest week or two out, train on the rest.
