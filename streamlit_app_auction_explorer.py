@@ -55,6 +55,8 @@ RUNS = [os.environ.get("AUCTION_MODEL_RUN"), r"E:\bridge\data\auction-model\runs
         "/var/lib/ben/auction-model/runs/v1-brill", "/data/runs/v1-brill"]
 FIELD = os.environ.get("AUCTION_EXPLORER_FIELD") or str(HERE.parent / "data" / "brill-replay" / "field.jsonl")
 DD = os.environ.get("AUCTION_EXPLORER_DD") or str(HERE.parent / "data" / "brill-replay" / "board-table" / "dd.json")
+# Morty's icon, the same address the Elo apps use for the browser tab and their titles
+MORTY = "https://github.com/BSalita/Elo_Ratings/blob/master/assets/logo_assistant.gif?raw=true"
 BEN_API = os.environ.get("AUCTION_EXPLORER_BEN_API", "https://ben.7nt.info/gameapi/8085").rstrip("/")
 RULE_NAME = {"toward": "Toward a contract of ours", "interfere": "Interfere with their auction",
              "interfere2": "Interfere (priced with the robots' doubling)", "sacrifice": "Sacrifice or push",
@@ -370,13 +372,15 @@ def stamp(path):
 
 
 # ---- page -----------------------------------------------------------------------------------------------
-st.set_page_config(page_title="Auction model explorer", layout="wide")
+st.set_page_config(page_title="Auction model explorer", page_icon=MORTY, layout="wide")
 run = next((r for r in RUNS if r and os.path.isfile(os.path.join(r, "model.pt"))), None)
 if run is None:
     st.error("No model found. Set AUCTION_MODEL_RUN to the run folder that holds model.pt.")
     st.stop()
 
-st.title("Auction model explorer")
+st.markdown(f'<h1 style="margin-top:0"><img src="{MORTY}" alt="Morty" '
+            'style="height:2.5rem;vertical-align:middle;margin-right:0.5rem;">Auction model explorer</h1>',
+            unsafe_allow_html=True)
 st.caption(f"What the model believes from one seat, call by call. Model: {os.path.basename(os.path.normpath(run))}. "
            "It sees one hand and the calls so far, never the other three hands.")
 
