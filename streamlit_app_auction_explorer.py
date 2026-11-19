@@ -241,7 +241,7 @@ def meanings(dealer, vul, calls):
 
 
 def auction_grid(calls, step, dealer, seat, vul, tips):
-    """The auction as four columns of buttons (West first); a click on a call sets 'Calls seen' to that call.
+    """The auction as four columns of buttons (West first); a click on a call shows the auction up to that call.
     tips: the text shown when the pointer rests on each call."""
     st.markdown("""<style>
         .st-key-auction [data-testid="stVerticalBlock"] {gap: 0.1rem}
@@ -261,9 +261,6 @@ def auction_grid(calls, step, dealer, seat, vul, tips):
             cols[(lead + i) % 4].button(button_call(c, i < step), key=f"call{i}", on_click=rewind, args=(i + 1,),
                                         type="secondary" if i + 1 == step else "tertiary",
                                         help=tips[i])
-        if calls:
-            st.button("Before any call", key="call_none", on_click=rewind, args=(0,),
-                      type="secondary" if step == 0 else "tertiary")
 
 
 def shade(lo, hi):
@@ -369,7 +366,7 @@ n = len(calls)
 shown = (hand, seat, dealer, vul, tuple(calls))
 if st.session_state.get("shown") != shown or not 0 <= st.session_state.get("step", n) <= n:
     st.session_state["shown"], st.session_state["step"] = shown, n          # another deal or auction: start at its end
-step = st.slider("Calls seen", 0, n, key="step", help="Move left to go back in the auction, or click a call in the auction.") if n else 0
+step = st.session_state["step"]                      # moved by a click on a call in the auction (rewind)
 seen = tuple(calls[:step])
 to_call = SEATS[(SEATS.index(dealer) + step) % 4]
 finished = over(list(seen))
@@ -402,12 +399,11 @@ with right:
         lines.append(f"Expected par for {my_side[0]}-{my_side[1]}: {history[i]:+.0f} before, {history[i + 1]:+.0f} after")
         tips.append("  \n".join(lines))
     auction_grid(calls, step, dealer, seat, vul, tips)
-    tail = (" Click a call to see the auction up to it. Rest the pointer on a call for what it shows in the 2/1 rule book "
-            "BEN uses (the player may have meant something else) and how the model's par moved.") if n else ""
+    tail = " Click a call to see the auction up to it. Hover over a bid to see bidding info." if n else ""
     if finished:
         st.caption("The auction is over." + tail)
     elif step < n:
-        st.caption(f"{SEAT_NAME[to_call]} to call. Gray calls have not been seen yet." + tail)
+        st.caption(f"{SEAT_NAME[to_call]} to call. Gray calls have not been bid yet." + tail)
     else:
         st.caption(f"{SEAT_NAME[to_call]} to call." + tail)
 
@@ -529,9 +525,9 @@ with tab_calls:
     if finished:
         st.info("The auction is over: no call to make.")
     elif to_call != seat:
-        mine = [k for k in range(n + 1) if SEATS[(SEATS.index(dealer) + k) % 4] == seat and not over(calls[:k])]
+        before = SEAT_NAME[SEATS[(SEATS.index(seat) + 3) % 4]]
         st.info(f"It is {SEAT_NAME[to_call]}'s turn. The rules speak when {SEAT_NAME[seat]} is to call: "
-                f"set 'Calls seen' to {', '.join(map(str, mine)) or 'a later step'}.")
+                f"click one of {before}'s calls in the auction.")
     else:
         if rule_problem:
             st.warning(f"The rules could not read this auction ({rule_problem}).")
