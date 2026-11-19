@@ -207,8 +207,8 @@ def auction_grid(calls, step, dealer, seat, vul):
     with st.container(key="auction"):
         cols = st.columns(4, width=420)
         for col, s in zip(cols, order):
-            name = f"**{SEAT_NAME[s]}**" if s == seat else SEAT_NAME[s]
-            col.markdown(f":{'red' if side_vul(vul, s) else 'green'}[{name}]")
+            col.markdown(f'<span style="font-family:monospace;font-weight:{700 if s == seat else 400};'
+                         f'color:{RED if side_vul(vul, s) else GREEN}">{SEAT_NAME[s]}</span>', unsafe_allow_html=True)
         lead = order.index(dealer)
         for k in range(lead):                        # seats before the dealer in the first row: a blank of a button's height
             cols[k].button(" ", key=f"blank{k}", type="tertiary", disabled=True)
