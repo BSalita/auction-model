@@ -203,6 +203,58 @@ def rewind(k):
     st.session_state["step"] = k
 
 
+def place(c):
+    """A call chosen by the user for the player to call at the position shown: the later calls go."""
+    s = st.session_state
+    s["calls"] = s["calls"][: s["step"]] + [c]
+    s["step"] = len(s["calls"])
+
+
+def undo():
+    s = st.session_state
+    s["calls"] = s["calls"][:-1]
+    s["step"] = min(s["step"], len(s["calls"]))
+
+
+def reset():
+    s = st.session_state
+    s["calls"], s["step"] = list(s["base"]), len(s["base"])
+
+
+def bidding_box(seen, to_call, finished, edited, differs_at):
+    """The 35 bids and Pass, X, XX for the player to call at the position shown; a call that is not legal there
+    is switched off. Undo takes the last call back, Reset returns to the auction as it was."""
+    st.markdown("""<style>
+        .st-key-bidbox [data-testid="stVerticalBlock"] {gap: 0.1rem}
+        .st-key-bidbox button {min-height: 1.7rem; padding: 0 0.3rem; font-family: monospace}
+        .st-key-bidbox [data-testid="stHorizontalBlock"] {gap: 0.3rem}
+        </style>""", unsafe_allow_html=True)
+    with st.expander("Edit the auction"):
+        with st.container(key="bidbox"):
+            if finished:
+                st.caption("The auction is over at this point. Click an earlier call to change what follows it, or use Undo.")
+            else:
+                st.caption(f"{SEAT_NAME[to_call]}'s call. Choosing one replaces everything after this point.")
+                legal = {c for c in ["PASS", "X", "XX"] + [f"{lvl}{s}" for lvl in range(1, 8) for s in "CDHSN"]
+                         if check_auction(list(seen) + [c])[1] is None}
+                cols = st.columns(5, width=330)
+                for lvl in range(1, 8):
+                    for col, s in zip(cols, "CDHSN"):
+                        c = f"{lvl}{s}"
+                        col.button(button_call(c, True), key=f"bid{c}", on_click=place, args=(c,), disabled=c not in legal,
+                                   width="stretch")
+                last = st.columns(5, width=330)
+                for col, c in zip(last, ("PASS", "X", "XX")):
+                    col.button(plain_call(c), key=f"bid{c}", on_click=place, args=(c,), disabled=c not in legal, width="stretch")
+            row = st.columns(5, width=330)
+            row[0].button("Undo", key="undo", on_click=undo, disabled=not st.session_state["calls"], width="stretch",
+                          help="Take the last call of the auction back")
+            row[1].button("Reset", key="reset", on_click=reset, disabled=not edited, width="stretch",
+                          help="Return to the auction as it was")
+            if edited:
+                st.caption(f"This is your line: it differs from the original auction from call {differs_at} on.")
+
+
 @st.cache_resource
 def meaning_store():
     """Meanings already fetched, shared by all sessions: {(dealer, vul, calls so far): text}; 'down' = time of the last failure."""
@@ -362,11 +414,17 @@ calls, problem = check_auction(calls)
 if problem:
     st.warning(f"Auction cut short: {problem}.")
 
+# The auction shown can be edited (bidding box, Undo, Reset, "Try"): `base` is the auction as it came from the
+# table or the text box, `calls` what is shown now. Another deal or another original auction starts afresh at its
+# end; looking from another seat keeps the edits.
+source = (deal["N"] + deal["E"] + deal["S"] if deal else hand, dealer, vul, tuple(calls))
+if st.session_state.get("source") != source:
+    st.session_state.update(source=source, base=list(calls), calls=list(calls), step=len(calls))
+original, calls = list(st.session_state["base"]), list(st.session_state["calls"])
 n = len(calls)
-shown = (hand, seat, dealer, vul, tuple(calls))
-if st.session_state.get("shown") != shown or not 0 <= st.session_state.get("step", n) <= n:
-    st.session_state["shown"], st.session_state["step"] = shown, n          # another deal or auction: start at its end
-step = st.session_state["step"]                      # moved by a click on a call in the auction (rewind)
+step = st.session_state["step"] = min(max(st.session_state["step"], 0), n)   # moved by a click on a call (rewind)
+edited = calls != original
+differs_at = next((i + 1 for i, (a, b) in enumerate(zip(calls, original)) if a != b), min(len(calls), len(original)) + 1)
 seen = tuple(calls[:step])
 to_call = SEATS[(SEATS.index(dealer) + step) % 4]
 finished = over(list(seen))
@@ -407,6 +465,7 @@ with right:
         st.caption(f"{SEAT_NAME[to_call]} to call. Gray calls have not been bid yet." + tail)
     else:
         st.caption(f"{SEAT_NAME[to_call]} to call." + tail)
+    bidding_box(seen, to_call, finished, edited, differs_at)
 
 current = contract_of(list(seen), dealer)
 top = st.columns(4)
@@ -421,7 +480,7 @@ if current:
     top[2].metric("Chance it makes", f"{p[level + 6:].sum():.0%}")
     top[3].metric(f"Its expected score for {my_side[0]}-{my_side[1]}", f"{(score if decl in my_side else -score):+.0f}")
 if reveal and table:
-    st.markdown("**What really happened at this table**")
+    st.markdown("**What really happened at this table**" + (" (with its real auction, not your edited one)" if edited else ""))
     real = st.columns(4)
     real[0].metric("Final contract", final_contract(table.get("contract"), table.get("declarer")))
     real[1].metric("Result", f"{table['tricks']} tricks, {result_of(table)}" if result_of(table) else "no play")
@@ -544,12 +603,16 @@ with tab_calls:
                      "The numbers behind it": ", ".join(f"{k} {v}" for k, v in p.items() if k not in ("rule", "tag", "bid"))}
                     for p in named]
             st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+            tries = list(dict.fromkeys(norm_call(p["bid"]) for p in named))
+            for col, c in zip(st.columns(max(len(tries), 8)), tries):
+                col.button(f"Try {plain_call(c)}", key=f"try{c}", on_click=place, args=(c,),
+                           help="Put this call into the auction here and see how the numbers move")
             st.caption("A named call is a suggestion, not a decision: the robot adds the calls marked 'yes' to its candidates "
                        "and its search then decides. Scores are for our side; 'their_fail' and 'their_make' are chances.")
         elif not rule_problem:
             st.write("The rules name no call here.")
-        if step < n:
-            st.caption(f"The call actually made here: {plain_call(calls[step])}.")
+        if step < len(original) and calls[:step] == original[:step]:
+            st.caption(f"The call actually made here: {plain_call(original[step])}.")
 
 if table:
     with tabs[4]:
