@@ -336,12 +336,12 @@ with st.sidebar:
         dealer, vul, matchpoint = board["dealer"], board["vul"], board.get("scoring") == "MP"
         raw_calls = table["auction"]
         truth = dd_results(DD, stamp(DD)).get(f"{board['deal']}|{board['dealer']}|{board['vul']}")
-        seat = st.radio("Seen from", list(SEATS), index=2, horizontal=True, format_func=SEAT_NAME.get)
+        seat = st.radio("Seen from", list("NSEW"), index=1, horizontal=True)
         hand = deal[seat]
     else:
-        seat = st.radio("Seen from", list(SEATS), index=2, horizontal=True, format_func=SEAT_NAME.get)
+        seat = st.radio("Seen from", list("NSEW"), index=1, horizontal=True)
         hand = st.text_input("Hand (spades.hearts.diamonds.clubs)", "AQJ9652.64.T3.82").strip().upper().replace("10", "T")
-        dealer = st.radio("Dealer", list(SEATS), index=0, horizontal=True, format_func=SEAT_NAME.get)
+        dealer = st.radio("Dealer", list("NSEW"), index=0, horizontal=True)
         vul = st.radio("Vulnerable", ["None", "NS", "EW", "All"], horizontal=True)
         matchpoint = st.radio("Scoring", ["IMPs", "Matchpoints"], horizontal=True) == "Matchpoints"
         raw_calls = st.text_input("Auction (calls from the dealer, e.g. 2C P 2D)", "2C").split()
