@@ -7,6 +7,10 @@ for each side, the par distribution and how it moved call by call, where the mis
 probably are, and the calls the purpose rules (tactical.py) would name. With a Brill board the real deal is known,
 so every prediction is shown next to the truth.
 
+The postmortem apps open this page with the boards of a game in the address ("AI Auctions" in their sidebar):
+  ?boards=<packed deals>&from=<acbl|ffbridge|bridgewebs|pbn|brill>&seat=<N|E|S|W>
+Those boards come without an auction: BEN's robots bid each one (its /autoplay service, bidding only).
+
 Where things are found (environment variables, each optional):
   AUCTION_MODEL_RUN        run folder holding model.pt (default: the first v1-brill folder that exists)
   AUCTION_MODEL_TORCH      folder holding the torch package if it is not importable
@@ -15,6 +19,7 @@ Where things are found (environment variables, each optional):
   AUCTION_EXPLORER_BEN_API BEN's REST API, asked what each call shows (default https://ben.7nt.info/gameapi/8085;
                            empty = no meanings in the tooltips)
 """
+import base64
 import concurrent.futures
 import json
 import os
@@ -63,6 +68,12 @@ RULE_NAME = {"toward": "Toward a contract of ours", "interfere": "Interfere with
              "sacrifice2": "Sacrifice (priced with the robots' reaction)", "double": "Penalty double",
              "double2": "Double by the scoring", "lead": "Direct partner's lead"}
 LIVE_RULES = ("double", "sacrifice")                 # the rules whose calls the robot on prod looks at
+GAME_VULS = ("None", "NS", "EW", "Both")             # the order of the vulnerability in a packed board
+GAME_FROM = {"acbl": "ACBL Postmortem", "ffbridge": "FFBridge Postmortem", "bridgewebs": "BridgeWebs Postmortem",
+             "pbn": "PBN/LIN Postmortem", "brill": "Brill Postmortem"}
+ROBOT_SYSTEMS = {"GIB (2/1)": "21GF-GIB", "SAYC": "SAYC"}   # the names BEN's API knows the systems by
+AI_AUCTION_NOTE = ("AI auction: the calls four robots reach on this board, each seeing only its own hand. "
+                   "It is not the auction at any table of your game.")
 
 
 # ---- model ----------------------------------------------------------------------------------------------
@@ -275,26 +286,33 @@ def meaning_store():
     return {"down": 0.0}
 
 
-def fetch_meaning(dealer, vul, prefix):
-    """What the last call of prefix shows, from BEN's rule book (its /explain service): '5+ ♠; 11-20 HCP'."""
-    to_ctx = {"PASS": "--", "X": "Db", "XX": "Rd"}
-    by = SEATS[(SEATS.index(dealer) + len(prefix) - 1) % 4]
-    query = urllib.parse.urlencode({"seat": by, "dealer": dealer, "vul": vul, "ctx": "".join(to_ctx.get(c, c) for c in prefix)})
-    request = urllib.request.Request(f"{BEN_API}/explain?{query}", headers={"User-Agent": "auction-explorer"})
-    with urllib.request.urlopen(request, timeout=5) as answer:
-        text = json.load(answer).get("explanation") or ""
-    name, _, shows = text.partition(" -- ")
+def tidy_meaning(text):
+    """BEN's 'Preemptive -- 4-!H; 7-8!S' as 'Preemptive: 4-♥; 7-8♠'."""
+    name, _, shows = (text or "").partition(" -- ")
     for s in "SHDC":
         name, shows = name.replace("!" + s, SYMBOL[s]), shows.replace("!" + s, SYMBOL[s])
     shows = shows.strip(" ;")
     return ": ".join(x for x in (name.strip(), shows) if x)
 
 
-def meanings(dealer, vul, calls):
+def fetch_meaning(dealer, vul, prefix, system=None):
+    """What the last call of prefix shows, from BEN's rule book (its /explain service): '5+ ♠; 11-20 HCP'.
+    system: the rule book to read (a value of ROBOT_SYSTEMS); None = the one the service bids by."""
+    to_ctx = {"PASS": "--", "X": "Db", "XX": "Rd"}
+    by = SEATS[(SEATS.index(dealer) + len(prefix) - 1) % 4]
+    asked = {"seat": by, "dealer": dealer, "vul": vul, "ctx": "".join(to_ctx.get(c, c) for c in prefix)}
+    if system:
+        asked.update(ourSystem=system, theirSystem=system)
+    request = urllib.request.Request(f"{BEN_API}/explain?{urllib.parse.urlencode(asked)}", headers={"User-Agent": "auction-explorer"})
+    with urllib.request.urlopen(request, timeout=5) as answer:
+        return tidy_meaning(json.load(answer).get("explanation"))
+
+
+def meanings(dealer, vul, calls, system=None):
     """The meaning of every call ('' where it is not known). Asks only for what is not stored yet, in parallel;
     after a failure the service is left alone for a minute, so a page never waits on it call after call."""
     store = meaning_store()
-    keys = [(dealer, vul, tuple(calls[:i + 1])) for i in range(len(calls))]
+    keys = [(dealer, vul, tuple(calls[:i + 1])) + ((system,) if system else ()) for i in range(len(calls))]
     missing = [k for k in keys if k not in store]
     if missing and BEN_API and time.time() - store["down"] > 60:
         try:
@@ -355,6 +373,45 @@ def contracts_table(dd, seat, vul, side):
     return pd.DataFrame(rows).sort_values("Expected score", ascending=False).head(6).reset_index(drop=True)
 
 
+# ---- boards of a game, handed over in the address by a postmortem app ------------------------------------
+@st.cache_data(show_spinner=False, max_entries=200)
+def game_boards(text):
+    """The boards packed into ?boards= (written by pack_boards in mlBridgePostmortemLib). After the version digit,
+    base64 of 16 bytes a board: board number (2), dealer and vulnerability (1), then the holder of each of the
+    52 cards, spades to clubs and ace to two, 2 bits a card (13)."""
+    if text[:1] != "1":
+        raise ValueError("made by a newer version of the postmortem app")
+    raw = base64.urlsafe_b64decode(text[1:] + "=" * (-(len(text) - 1) % 4))
+    if not raw or len(raw) % 16:
+        raise ValueError("cut short")
+    boards = []
+    for at in range(0, len(raw), 16):
+        chunk = raw[at:at + 16]
+        holders = int.from_bytes(chunk[3:], "big")
+        hands = [["", "", "", ""] for _ in SEATS]
+        for card in range(52):
+            hands[(holders >> 2 * (51 - card)) & 3][card // 13] += infer.RANKS[card % 13]
+        if any(sum(map(len, hand)) != 13 for hand in hands):
+            raise ValueError("a hand without 13 cards")
+        boards.append({"board": int.from_bytes(chunk[:2], "big"), "dealer": SEATS[chunk[2] & 3],
+                       "vul": GAME_VULS[chunk[2] >> 2 & 3], "deal": {s: ".".join(hands[i]) for i, s in enumerate(SEATS)}})
+    return boards
+
+
+@st.cache_data(show_spinner="The robots are bidding the board ...", max_entries=2000)
+def robot_auction(hands, dealer, vul, system, matchpoint):
+    """The auction four robots of one system reach on a deal, each seeing its own hand (BEN's /autoplay, bidding
+    only; about 2 seconds). hands: the four hands, North first. Returns the calls and what each one shows."""
+    asked = urllib.parse.urlencode({"deal": hands, "bidding_only": "True", "matchtype": "MP" if matchpoint else "IMP",
+                                    "dealer": dealer, "vul": vul, "ourSystem": system, "theirSystem": system})
+    request = urllib.request.Request(f"{BEN_API}/autoplay?{asked}", headers={"User-Agent": "auction-explorer"})
+    with urllib.request.urlopen(request, timeout=90) as answer:
+        told = json.load(answer)
+    calls = [norm_call(c) for c in told["auction"]]
+    shows = [tidy_meaning(e.get("explanation")) for e in told.get("auction_with_explanations") or []]
+    return calls, shows if len(shows) == len(calls) else [""] * len(calls)
+
+
 # ---- Brill boards ---------------------------------------------------------------------------------------
 @st.cache_data(show_spinner="Reading the Brill boards ...")
 def brill_boards(path, stamp):
@@ -385,10 +442,38 @@ st.caption(f"What the model believes from one seat, call by call. Model: {os.pat
            "It sees one hand and the calls so far, never the other three hands.")
 
 have_boards = os.path.isfile(FIELD)
+game, game_from = [], GAME_FROM.get(st.query_params.get("from", ""), "a postmortem app")
+if st.query_params.get("boards"):
+    try:
+        game = game_boards(st.query_params["boards"])
+    except Exception as error:                       # a link cut short or edited by hand
+        st.warning(f"The boards in this link could not be read ({error}). Open AI Auctions again from the postmortem app.")
 with st.sidebar:
-    source = st.radio("Deal", ["A Brill board", "My own deal"] if have_boards else ["My own deal"], horizontal=True)
-    deal, truth, matchpoint, table, tables = None, None, False, None, []
-    if source == "A Brill board":
+    source = st.radio("Deal", (["Your game"] if game else []) + (["A Brill board"] if have_boards else []) + ["My own deal"],
+                      horizontal=True)
+    deal, truth, matchpoint, table, tables, system = None, None, False, None, [], None
+    if source == "Your game":
+        st.caption(f"{len(game)} boards from {game_from}.")
+        board = st.selectbox("Board", game, format_func=lambda b: f"Board {b['board']}  ({b['dealer']} deals, {b['vul']} vul)")
+        system = ROBOT_SYSTEMS[st.radio("The robots bid", list(ROBOT_SYSTEMS), horizontal=True,
+                                        help="The system all four robots bid: GIB = 2/1 game force as the GIB robots on BBO "
+                                             "bid it, SAYC = Standard American Yellow Card.")]
+        matchpoint = st.radio("Scoring", ["Matchpoints", "IMPs"], horizontal=True) == "Matchpoints"
+        asked_seat = st.query_params.get("seat", "S")
+        seat = st.radio("Seen from", list("NSEW"), index="NSEW".index(asked_seat) if asked_seat in list("NSEW") else 1, horizontal=True)
+        deal, dealer, vul = board["deal"], board["dealer"], board["vul"]
+        hand, raw_calls = deal[seat], []
+        if not BEN_API:
+            st.warning("No robot service is set (AUCTION_EXPLORER_BEN_API): enter the auction with 'Edit the auction'.")
+        else:
+            try:
+                raw_calls, shown = robot_auction(" ".join(deal[s] for s in SEATS), dealer, vul, system, matchpoint)
+                for i, text in enumerate(shown):     # the robots' own account of their calls, kept for the tooltips
+                    meaning_store().setdefault((dealer, vul, tuple(raw_calls[:i + 1]), system), text)
+            except Exception as error:
+                st.warning(f"The robots could not bid this board now ({type(error).__name__}: {error}). "
+                           "The page shows it before any call; enter an auction with 'Edit the auction'.")
+    elif source == "A Brill board":
         boards = brill_boards(FIELD, stamp(FIELD))
         dates = sorted({b["date"] for b in boards}, reverse=True)
         date = st.selectbox("Date", dates)
@@ -414,7 +499,8 @@ with st.sidebar:
         matchpoint = st.radio("Scoring", ["IMPs", "Matchpoints"], horizontal=True) == "Matchpoints"
         raw_calls = st.text_input("Auction (calls from the dealer, e.g. 2C P 2D)", "2C").split()
     reveal = st.checkbox("Show the hidden hands and the real results", value=False, disabled=deal is None,
-                         help="Only for a Brill board, where the whole deal is known.")
+                         help="For a board of your game or a Brill board, where the whole deal is known. "
+                              "Real results and real par are shown for Brill boards only.")
 
 suits = hand.split(".")
 if len(suits) != 4 or sum(len(s) for s in suits) != 13 or any(ch not in infer.RANKS for s in suits for ch in s) \
@@ -463,7 +549,9 @@ with left:
         st.markdown(hand_html(hand, SEAT_NAME[seat], True, side_vul(vul, seat)), unsafe_allow_html=True)
     st.caption(f"{SEAT_NAME[dealer]} deals, vulnerable: {vul}, {'matchpoints' if matchpoint else 'IMPs'}.")
 with right:
-    shows = meanings(dealer, vul, calls)
+    if system:                                       # a board of the visitor's game, bid by the robots
+        st.caption(AI_AUCTION_NOTE)
+    shows = meanings(dealer, vul, calls, system)
     tips = []
     for i, c in enumerate(calls):
         by = SEATS[(SEATS.index(dealer) + i) % 4]
