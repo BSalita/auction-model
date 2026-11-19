@@ -1,4 +1,4 @@
-"""Auction model explorer: step through an auction and see what the model believes from one seat.
+"""Auction model explorer (shown to visitors as "Morty Auction Playground"): step through an auction and see what the model believes from one seat.
 
   streamlit run streamlit_app_auction_explorer.py --server.port 8536
 
@@ -456,14 +456,14 @@ def stamp(path):
 
 
 # ---- page -----------------------------------------------------------------------------------------------
-st.set_page_config(page_title="Auction model explorer", page_icon=MORTY, layout="wide")
+st.set_page_config(page_title="Morty Auction Playground", page_icon=MORTY, layout="wide")
 run = next((r for r in RUNS if r and os.path.isfile(os.path.join(r, "model.pt"))), None)
 if run is None:
     st.error("No model found. Set AUCTION_MODEL_RUN to the run folder that holds model.pt.")
     st.stop()
 
 st.markdown(f'<h1 style="margin-top:0"><img src="{MORTY}" alt="Morty" '
-            'style="height:2.5rem;vertical-align:middle;margin-right:0.5rem;">Auction model explorer</h1>',
+            'style="height:2.5rem;vertical-align:middle;margin-right:0.5rem;">Auction Playground</h1>',
             unsafe_allow_html=True)
 st.caption(f"What the model believes from one seat, call by call. Model: {os.path.basename(os.path.normpath(run))}. "
            "It sees one hand and the calls so far, never the other three hands.")
@@ -666,7 +666,7 @@ with tab_tricks:
     order = [(SEATS.index(d) - SEATS.index(seat)) % 4 for d in SEATS]
     table_model = pd.DataFrame(expected[order], index=[SEAT_NAME[d] for d in SEATS], columns=[SYMBOL[s] for s in STRAINS])
     cols = st.columns(2)
-    cols[0].markdown("**Expected tricks, by declarer**")
+    cols[0].markdown("**Expected tricks by declarer direction**")
     cols[0].dataframe(table_model.style.format("{:.1f}").map(shade(4, 11)), width="stretch")
     if reveal and truth:
         real = pd.DataFrame([[truth["tricks"][s + d] for s in STRAINS] for d in SEATS],
@@ -674,11 +674,12 @@ with tab_tricks:
         cols[1].markdown("**Real double-dummy tricks**")
         cols[1].dataframe(real.style.map(shade(4, 11)), width="stretch")
     else:
-        cols[1].caption("Darker = more tricks. The model gives a probability for every number of tricks; this table shows "
-                        "the average. Tick the box in the sidebar to compare with the real deal.")
+        # the real double-dummy tricks are known for Brill boards only, so only there is the box worth pointing at
+        cols[1].caption("The model's average tricks; darker = more."
+                        + (" Tick the sidebar box to compare with the real deal." if truth else ""))
     cols = st.columns(2)
     for col, side in zip(cols, (my_side, their_side)):
-        col.markdown(f"**Best contracts for {side[0]}-{side[1]}** (undoubled, by expected score)")
+        col.markdown(f"**Best contracts for {side[0]}-{side[1]}**")   # undoubled, ordered by the Expected score column
         col.dataframe(contracts_table(now["dd"], seat, vul, side).style.format({"Makes": "{:.0%}", "Expected score": "{:+.0f}"})
                       .map(shade(0, 1), subset=["Makes"]), width="stretch", hide_index=True)
 
