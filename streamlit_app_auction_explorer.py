@@ -18,7 +18,7 @@ Where things are found (environment variables, each optional):
   AUCTION_MODEL_TORCH      folder holding the torch package if it is not importable
   AUCTION_EXPLORER_FIELD   Brill field file (default ../data/brill-replay/field.jsonl)
   AUCTION_EXPLORER_DD      double-dummy results of those boards (default ../data/brill-replay/board-table/dd.json)
-  AUCTION_EXPLORER_BEN_API BEN's REST API, asked what each call shows (default https://ben.7nt.info/gameapi/8085;
+  AUCTION_EXPLORER_BEN_API BEN's REST API, asked what each call shows (default https://morty.7nt.info/gameapi/8085;
                            empty = no meanings in the tooltips)
 """
 import base64
@@ -65,7 +65,7 @@ FIELD = os.environ.get("AUCTION_EXPLORER_FIELD") or str(HERE.parent / "data" / "
 DD = os.environ.get("AUCTION_EXPLORER_DD") or str(HERE.parent / "data" / "brill-replay" / "board-table" / "dd.json")
 # Morty's icon, the same address the Elo apps use for the browser tab and their titles
 MORTY = "https://github.com/BSalita/Elo_Ratings/blob/master/assets/logo_assistant.gif?raw=true"
-BEN_API = os.environ.get("AUCTION_EXPLORER_BEN_API", "https://ben.7nt.info/gameapi/8085").rstrip("/")
+BEN_API = os.environ.get("AUCTION_EXPLORER_BEN_API", "https://morty.7nt.info/gameapi/8085").rstrip("/")
 RULE_NAME = {"toward": "Toward a contract of ours", "interfere": "Interfere with their auction",
              "interfere2": "Interfere (priced with the robots' doubling)", "sacrifice": "Sacrifice or push",
              "sacrifice2": "Sacrifice (priced with the robots' reaction)", "double": "Penalty double",
