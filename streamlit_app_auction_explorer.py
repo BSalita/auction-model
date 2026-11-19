@@ -482,11 +482,12 @@ if table:
                      "Contract": final_contract(t.get("contract"), t.get("declarer")),
                      "Tricks": t.get("tricks") if result_of(t) else None, "Result": result_of(t),
                      f"Score for {my_side[0]}-{my_side[1]}": None if t.get("ns_score") is None else sign * t["ns_score"],
-                     "Shown above": "yes" if t is table else ""}
+                     "Auction shown above": "yes" if (t.get("player_id"), t["auction"]) == (table.get("player_id"), table["auction"]) else ""}
                     for t in tables]
             score = f"Score for {my_side[0]}-{my_side[1]}"
             frame = pd.DataFrame(rows).sort_values(score, ascending=False, na_position="last").reset_index(drop=True)
-            st.markdown(f"**All {len(frame)} tables on this board**, best score for {my_side[0]}-{my_side[1]} first")
+            st.markdown(f"**All {len(frame)} tables on this board**, best score for {my_side[0]}-{my_side[1]} first. "
+                        f"The last column marks the table chosen in the sidebar ({table['name']}).")
             st.dataframe(frame.style.format({score: "{:+.0f}", "Tricks": "{:.0f}"}, na_rep=""), width="stretch", hide_index=True,
                          height=min(38 * (len(frame) + 1), 700))
             if truth:
