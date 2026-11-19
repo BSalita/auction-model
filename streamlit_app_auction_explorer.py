@@ -43,6 +43,7 @@ SEAT_NAME = {"N": "North", "E": "East", "S": "South", "W": "West"}
 STRAINS = infer.STRAINS                              # "SHDCN", the order of the model's trick table
 SYMBOL = {"S": "♠", "H": "♥", "D": "♦", "C": "♣", "N": "NT"}
 RED = "#d1342f"
+GREEN = "#2e9e4f"                                    # a seat that is not vulnerable; RED one that is
 BLUE = "42, 120, 214"                                # the one hue for magnitudes; shade = how much
 RUNS = [os.environ.get("AUCTION_MODEL_RUN"), r"E:\bridge\data\auction-model\runs\v1-brill",
         "/var/lib/ben/auction-model/runs/v1-brill", "/data/runs/v1-brill"]
@@ -175,27 +176,49 @@ def plain_call(c):
     return "Pass" if c == "PASS" else c if c in ("X", "XX") else c[0] + SYMBOL[c[1]]
 
 
-def hand_html(hand, title, me=False):
+def hand_html(hand, title, me=False, vulnerable=False):
     rows = "".join(f'<div><span style="color:{RED if s in "HD" else "inherit"}">{SYMBOL[s]}</span> {cards or "—"}</div>'
                    for s, cards in zip("SHDC", hand.split(".")))
     weight = "700" if me else "400"
-    return f'<div style="font-family:monospace;line-height:1.35"><div style="font-weight:{weight};opacity:.75">{title}</div>{rows}</div>'
+    return f'<div style="font-family:monospace;line-height:1.35"><div style="font-weight:{weight};color:{RED if vulnerable else GREEN}">{title}</div>{rows}</div>'
 
 
-def auction_html(calls, step, dealer, seat):
+def button_call(c, seen):
+    """A call as a button label: red suits, gray when not seen yet."""
+    if not seen:
+        return f":gray[{plain_call(c)}]"
+    if c[0].isdigit() and c[1] in "HD":
+        return f"{c[0]}:red[{SYMBOL[c[1]]}]"
+    return plain_call(c)
+
+
+def rewind(k):
+    st.session_state["step"] = k
+
+
+def auction_grid(calls, step, dealer, seat, vul):
+    """The auction as four columns of buttons (West first); a click on a call sets 'Calls seen' to that call."""
+    st.markdown("""<style>
+        .st-key-auction [data-testid="stVerticalBlock"] {gap: 0.1rem}
+        .st-key-auction button {min-height: 1.7rem; padding: 0 0.5rem; font-family: monospace}
+        .st-key-auction [data-testid="stHorizontalBlock"] {gap: 0.4rem}
+        </style>""", unsafe_allow_html=True)
     order = "WNES"
-    cells = [""] * order.index(dealer) + [(show_call(c), i < step) for i, c in enumerate(calls)]
-    head = "".join(f'<th style="text-align:left;padding:2px 14px 2px 0;font-weight:{700 if s == seat else 400}">{SEAT_NAME[s]}</th>' for s in order)
-    body = ""
-    for r in range(0, len(cells), 4):
-        body += "<tr>"
-        for cell in cells[r:r + 4]:
-            if cell == "":
-                body += "<td></td>"
-            else:
-                body += f'<td style="padding:2px 14px 2px 0;opacity:{1 if cell[1] else .3}">{cell[0]}</td>'
-        body += "</tr>"
-    return f'<table style="border-collapse:collapse;font-family:monospace"><tr>{head}</tr>{body}</table>'
+    with st.container(key="auction"):
+        cols = st.columns(4, width=420)
+        for col, s in zip(cols, order):
+            name = f"**{SEAT_NAME[s]}**" if s == seat else SEAT_NAME[s]
+            col.markdown(f":{'red' if side_vul(vul, s) else 'green'}[{name}]")
+        lead = order.index(dealer)
+        for k in range(lead):                        # seats before the dealer in the first row: a blank of a button's height
+            cols[k].button(" ", key=f"blank{k}", type="tertiary", disabled=True)
+        for i, c in enumerate(calls):
+            cols[(lead + i) % 4].button(button_call(c, i < step), key=f"call{i}", on_click=rewind, args=(i + 1,),
+                                        type="secondary" if i + 1 == step else "tertiary",
+                                        help=f"See the auction up to this call ({i + 1} seen)")
+        if calls:
+            st.button("Before any call", key="call_none", on_click=rewind, args=(0,),
+                      type="secondary" if step == 0 else "tertiary")
 
 
 def shade(lo, hi):
@@ -298,7 +321,10 @@ if problem:
     st.warning(f"Auction cut short: {problem}.")
 
 n = len(calls)
-step = st.slider("Calls seen", 0, n, n, help="Move left to go back in the auction.") if n else 0
+shown = (hand, seat, dealer, vul, tuple(calls))
+if st.session_state.get("shown") != shown or not 0 <= st.session_state.get("step", n) <= n:
+    st.session_state["shown"], st.session_state["step"] = shown, n          # another deal or auction: start at its end
+step = st.slider("Calls seen", 0, n, key="step", help="Move left to go back in the auction, or click a call in the auction.") if n else 0
 seen = tuple(calls[:step])
 to_call = SEATS[(SEATS.index(dealer) + step) % 4]
 finished = over(list(seen))
@@ -310,23 +336,25 @@ left, right = st.columns([1, 1.3])
 with left:
     if reveal and deal:
         grid = st.columns(3)
-        grid[1].markdown(hand_html(deal["N"], "North", seat == "N"), unsafe_allow_html=True)
+        grid[1].markdown(hand_html(deal["N"], "North", seat == "N", side_vul(vul, "N")), unsafe_allow_html=True)
         row = st.columns(3)
-        row[0].markdown(hand_html(deal["W"], "West", seat == "W"), unsafe_allow_html=True)
-        row[2].markdown(hand_html(deal["E"], "East", seat == "E"), unsafe_allow_html=True)
+        row[0].markdown(hand_html(deal["W"], "West", seat == "W", side_vul(vul, "W")), unsafe_allow_html=True)
+        row[2].markdown(hand_html(deal["E"], "East", seat == "E", side_vul(vul, "E")), unsafe_allow_html=True)
         grid = st.columns(3)
-        grid[1].markdown(hand_html(deal["S"], "South", seat == "S"), unsafe_allow_html=True)
+        grid[1].markdown(hand_html(deal["S"], "South", seat == "S", side_vul(vul, "S")), unsafe_allow_html=True)
     else:
-        st.markdown(hand_html(hand, f"{SEAT_NAME[seat]}'s hand", True), unsafe_allow_html=True)
-    st.caption(f"{SEAT_NAME[dealer]} deals, vulnerable: {vul}, {'matchpoints' if matchpoint else 'IMPs'}")
+        st.markdown(hand_html(hand, f"{SEAT_NAME[seat]}'s hand", True, side_vul(vul, seat)), unsafe_allow_html=True)
+    st.caption(f"{SEAT_NAME[dealer]} deals, vulnerable: {vul}, {'matchpoints' if matchpoint else 'IMPs'}. "
+               "Seat names: green = not vulnerable, red = vulnerable.")
 with right:
-    st.markdown(auction_html(calls, step, dealer, seat), unsafe_allow_html=True)
+    auction_grid(calls, step, dealer, seat, vul)
+    tail = " Click a call to see the auction up to it." if n else ""
     if finished:
-        st.caption("The auction is over.")
+        st.caption("The auction is over." + tail)
     elif step < n:
-        st.caption(f"{SEAT_NAME[to_call]} to call. Faded calls have not been seen yet.")
+        st.caption(f"{SEAT_NAME[to_call]} to call. Gray calls have not been seen yet." + tail)
     else:
-        st.caption(f"{SEAT_NAME[to_call]} to call.")
+        st.caption(f"{SEAT_NAME[to_call]} to call." + tail)
 
 current = contract_of(list(seen), dealer)
 top = st.columns(4)
