@@ -343,7 +343,7 @@ with left:
         grid = st.columns(3)
         grid[1].markdown(hand_html(deal["S"], "South", seat == "S", side_vul(vul, "S")), unsafe_allow_html=True)
     else:
-        st.markdown(hand_html(hand, f"{SEAT_NAME[seat]}'s hand", True, side_vul(vul, seat)), unsafe_allow_html=True)
+        st.markdown(hand_html(hand, SEAT_NAME[seat], True, side_vul(vul, seat)), unsafe_allow_html=True)
     st.caption(f"{SEAT_NAME[dealer]} deals, vulnerable: {vul}, {'matchpoints' if matchpoint else 'IMPs'}.")
 with right:
     auction_grid(calls, step, dealer, seat, vul)
