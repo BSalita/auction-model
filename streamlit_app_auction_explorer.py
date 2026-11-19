@@ -8,8 +8,10 @@ probably are, and the calls the purpose rules (tactical.py) would name. With a B
 so every prediction is shown next to the truth.
 
 The postmortem apps open this page with the boards of a game in the address ("AI Auctions" in their sidebar):
-  ?boards=<packed deals>&from=<acbl|ffbridge|bridgewebs|pbn|brill>&seat=<N|E|S|W>
-Those boards come without an auction: BEN's robots bid each one (its /autoplay service, bidding only).
+  ?boards=<packed deals>&from=<acbl|ffbridge|bridgewebs|pbn|brill>&seat=<N|E|S|W>&played=<contract and tricks a board>
+Those boards come without an auction: BEN's robots bid each one (its /autoplay service, bidding only). The page is
+then about that game only (no choice of a Brill board or an own deal), and shows the contract really played beside
+the robots' contract.
 
 Where things are found (environment variables, each optional):
   AUCTION_MODEL_RUN        run folder holding model.pt (default: the first v1-brill folder that exists)
@@ -24,6 +26,7 @@ import concurrent.futures
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 import urllib.parse
@@ -72,6 +75,7 @@ GAME_VULS = ("None", "NS", "EW", "Both")             # the order of the vulnerab
 GAME_FROM = {"acbl": "ACBL Postmortem", "ffbridge": "FFBridge Postmortem", "bridgewebs": "BridgeWebs Postmortem",
              "pbn": "PBN/LIN Postmortem", "brill": "Brill Postmortem"}
 ROBOT_SYSTEMS = {"GIB (2/1)": "21GF-GIB", "SAYC": "SAYC"}   # the names BEN's API knows the systems by
+GAME_FIRST_SYSTEM = {"ffbridge": "SAYC"}             # the system chosen at first, by ?from=; the others start on GIB
 AI_AUCTION_NOTE = ("AI auction: the calls four robots reach on this board, each seeing only its own hand. "
                    "It is not the auction at any table of your game.")
 
@@ -398,6 +402,29 @@ def game_boards(text):
     return boards
 
 
+def game_played(text, count):
+    """What was played on each board of the game, from ?played= (written by played_contracts in mlBridgePostmortemLib):
+    one text a board, separated by dots, '4SXE-9' (contract, declarer, tricks), 'PASS', or empty where no single
+    table is known. Returns a dict {contract, declarer, tricks} or None for each board."""
+    if not text:
+        return [None] * count
+    parts = text.split(".")
+    if len(parts) != count:
+        raise ValueError(f"{len(parts)} contracts for {count} boards")
+    played = []
+    for part in parts:
+        contract, _, tricks = part.partition("-")
+        if not part:
+            played.append(None)
+        elif contract == "PASS":
+            played.append({"contract": "", "declarer": "", "tricks": None})
+        elif re.fullmatch(r"[1-7][CDHSN]X{0,2}[NESW]", contract) and re.fullmatch(r"\d{0,2}", tricks):
+            played.append({"contract": contract[:-1], "declarer": contract[-1], "tricks": int(tricks) if tricks else None})
+        else:
+            raise ValueError(f"'{part}' is not a contract")
+    return played
+
+
 @st.cache_data(show_spinner="The robots are bidding the board ...", max_entries=2000)
 def robot_auction(hands, dealer, vul, system, matchpoint):
     """The auction four robots of one system reach on a deal, each seeing its own hand (BEN's /autoplay, bidding
@@ -448,19 +475,32 @@ if st.query_params.get("boards"):
         game = game_boards(st.query_params["boards"])
     except Exception as error:                       # a link cut short or edited by hand
         st.warning(f"The boards in this link could not be read ({error}). Open AI Auctions again from the postmortem app.")
+if game:
+    try:
+        for b, p in zip(game, game_played(st.query_params.get("played", ""), len(game))):
+            b["played"] = p
+    except ValueError as error:
+        st.warning(f"The contracts played in your game could not be read from this link ({error}); the boards are shown without them.")
 with st.sidebar:
-    source = st.radio("Deal", (["Your game"] if game else []) + (["A Brill board"] if have_boards else []) + ["My own deal"],
-                      horizontal=True)
-    deal, truth, matchpoint, table, tables, system = None, None, False, None, [], None
+    deal, truth, matchpoint, table, tables, system, actual = None, None, False, None, [], None, None
+    if game:
+        # opened from a postmortem app: the page is about that game's boards, with no other choice of deal
+        source = "Your game"
+        st.markdown(f"**Your game**  \n{len(game)} boards from {game_from}")
+    else:
+        source = st.radio("Deal", ["A Brill board", "My own deal"] if have_boards else ["My own deal"], horizontal=True)
     if source == "Your game":
-        st.caption(f"{len(game)} boards from {game_from}.")
         board = st.selectbox("Board", game, format_func=lambda b: f"Board {b['board']}  ({b['dealer']} deals, {b['vul']} vul)")
+        actual = board.get("played")
+        # a game from FFBridge starts on SAYC (five-card majors, as most French pairs play), the others on GIB's 2/1
+        first_system = GAME_FIRST_SYSTEM.get(st.query_params.get("from", ""), "GIB (2/1)")
         system = ROBOT_SYSTEMS[st.radio("The robots bid", list(ROBOT_SYSTEMS), horizontal=True,
+                                        index=list(ROBOT_SYSTEMS).index(first_system),
                                         help="The system all four robots bid: GIB = 2/1 game force as the GIB robots on BBO "
                                              "bid it, SAYC = Standard American Yellow Card.")]
         matchpoint = st.radio("Scoring", ["Matchpoints", "IMPs"], horizontal=True) == "Matchpoints"
         asked_seat = st.query_params.get("seat", "S")
-        seat = st.radio("Seen from", list("NSEW"), index="NSEW".index(asked_seat) if asked_seat in list("NSEW") else 1, horizontal=True)
+        seat = st.radio("Player direction", list("NSEW"), index="NSEW".index(asked_seat) if asked_seat in list("NSEW") else 1, horizontal=True)
         deal, dealer, vul = board["deal"], board["dealer"], board["vul"]
         hand, raw_calls = deal[seat], []
         if not BEN_API:
@@ -489,10 +529,10 @@ with st.sidebar:
         dealer, vul, matchpoint = board["dealer"], board["vul"], board.get("scoring") == "MP"
         raw_calls = table["auction"]
         truth = dd_results(DD, stamp(DD)).get(f"{board['deal']}|{board['dealer']}|{board['vul']}")
-        seat = st.radio("Seen from", list("NSEW"), index=1, horizontal=True)
+        seat = st.radio("Player direction", list("NSEW"), index=1, horizontal=True)
         hand = deal[seat]
     else:
-        seat = st.radio("Seen from", list("NSEW"), index=1, horizontal=True)
+        seat = st.radio("Player direction", list("NSEW"), index=1, horizontal=True)
         hand = st.text_input("Hand (spades.hearts.diamonds.clubs)", "AQJ9652.64.T3.82").strip().upper().replace("10", "T")
         dealer = st.radio("Dealer", list("NSEW"), index=0, horizontal=True)
         vul = st.radio("Vulnerable", ["None", "NS", "EW", "All"], horizontal=True)
@@ -501,6 +541,8 @@ with st.sidebar:
     reveal = st.checkbox("Show the hidden hands and the real results", value=False, disabled=deal is None,
                          help="For a board of your game or a Brill board, where the whole deal is known. "
                               "Real results and real par are shown for Brill boards only.")
+    if game:
+        st.caption("[Explore other deals](./): Brill boards or a deal of your own.")
 
 suits = hand.split(".")
 if len(suits) != 4 or sum(len(s) for s in suits) != 13 or any(ch not in infer.RANKS for s in suits for ch in s) \
@@ -574,6 +616,20 @@ with right:
     bidding_box(seen, dealer, finished, edited, differs_at)
 
 current = contract_of(list(seen), dealer)
+if system:
+    # A board of the visitor's game: what was really played there, kept apart from what the robots bid.
+    st.markdown("**In your game**")
+    real = st.columns(4)
+    if actual is None:
+        real[0].metric("Actual contract", "not known",
+                       help="The link names no single table for this board: the player of the postmortem did not play it, "
+                            "or the postmortem was opened without a player.")
+    else:
+        real[0].metric("Actual contract", final_contract(actual["contract"], actual["declarer"]),
+                       help="The contract at the table of the player the postmortem was made for.")
+        if result_of(actual):                        # short, so a quarter of the page holds it: 'Made +1', 'Down 2'
+            real[1].metric(f"Actual result ({actual['tricks']} tricks)", result_of(actual).capitalize())
+    st.markdown("**In the AI auction**" + (" (edited by you)" if edited else ""))
 top = st.columns(4)
 top[0].metric(f"Expected par for {my_side[0]}-{my_side[1]}", f"{now['par_mean']:+.0f}")
 if current:
@@ -582,7 +638,7 @@ if current:
     p = now["dd"][rel, STRAINS.index(strain)]
     score = float((p * infer.SCORE[level - 1, STRAINS.index(strain), dbl, int(side_vul(vul, decl))]).sum())
     name = f"{level}{SYMBOL[strain]}{'x' * dbl} by {SEAT_NAME[decl]}"
-    top[1].metric("Contract so far", name)
+    top[1].metric("AI contract so far" if system else "Contract so far", name)
     top[2].metric("Chance it makes", f"{p[level + 6:].sum():.0%}")
     top[3].metric(f"Its expected score for {my_side[0]}-{my_side[1]}", f"{(score if decl in my_side else -score):+.0f}")
 if reveal and table:
