@@ -203,10 +203,10 @@ def rewind(k):
     st.session_state["step"] = k
 
 
-def place(c):
-    """A call chosen by the user for the player to call at the position shown: the later calls go."""
+def place(c, replace=False):
+    """A call chosen by the user: in place of the selected call (replace) or after it; the later calls go."""
     s = st.session_state
-    s["calls"] = s["calls"][: s["step"]] + [c]
+    s["calls"] = s["calls"][: max(s["step"] - (1 if replace else 0), 0)] + [c]
     s["step"] = len(s["calls"])
 
 
@@ -221,9 +221,17 @@ def reset():
     s["calls"], s["step"] = list(s["base"]), len(s["base"])
 
 
-def bidding_box(seen, to_call, finished, edited, differs_at):
-    """The 35 bids and Pass, X, XX for the player to call at the position shown; a call that is not legal there
-    is switched off. Undo takes the last call back, Reset returns to the auction as it was."""
+def bidding_box(seen, dealer, finished, edited, differs_at):
+    """The 35 bids and Pass, X, XX, either to replace the selected call (the last one of `seen`) or, when that is
+    the last call of an unfinished auction, to add the next player's call. A call that is not legal is switched
+    off. Undo takes the last call back, Reset returns to the auction as it was."""
+    seen = list(seen)
+    total = len(st.session_state["calls"])
+    seat_of = lambda i: SEAT_NAME[SEATS[(SEATS.index(dealer) + i) % 4]]
+    can_add = len(seen) == total and not finished
+    modes = (["add"] if can_add else []) + (["replace"] if seen else [])
+    label = {"add": f"Add {seat_of(len(seen))}'s call",
+             "replace": f"Replace {seat_of(len(seen) - 1)}'s {plain_call(seen[-1])}" if seen else ""}
     st.markdown("""<style>
         .st-key-bidbox [data-testid="stVerticalBlock"] {gap: 0.1rem}
         .st-key-bidbox button {min-height: 1.7rem; padding: 0 0.3rem; font-family: monospace}
@@ -231,21 +239,25 @@ def bidding_box(seen, to_call, finished, edited, differs_at):
         </style>""", unsafe_allow_html=True)
     with st.expander("Edit the auction"):
         with st.container(key="bidbox"):
-            if finished:
-                st.caption("The auction is over at this point. Click an earlier call to change what follows it, or use Undo.")
-            else:
-                st.caption(f"{SEAT_NAME[to_call]}'s call. Choosing one replaces everything after this point.")
+            if modes:
+                # the options name the call, so the choice starts afresh (adding first) whenever the selection moves
+                choice = st.radio("What to do", [label[m] for m in modes], horizontal=True, label_visibility="collapsed")
+                replace = choice == label["replace"]
+                if replace and len(seen) < total:
+                    st.caption("The calls after it are dropped.")
+                before = seen[:-1] if replace else seen
                 legal = {c for c in ["PASS", "X", "XX"] + [f"{lvl}{s}" for lvl in range(1, 8) for s in "CDHSN"]
-                         if check_auction(list(seen) + [c])[1] is None}
+                         if check_auction(before + [c])[1] is None}
                 cols = st.columns(5, width=330)
                 for lvl in range(1, 8):
                     for col, s in zip(cols, "CDHSN"):
                         c = f"{lvl}{s}"
-                        col.button(button_call(c, True), key=f"bid{c}", on_click=place, args=(c,), disabled=c not in legal,
-                                   width="stretch")
+                        col.button(button_call(c, True), key=f"bid{c}", on_click=place, args=(c, replace),
+                                   disabled=c not in legal, width="stretch")
                 last = st.columns(5, width=330)
                 for col, c in zip(last, ("PASS", "X", "XX")):
-                    col.button(plain_call(c), key=f"bid{c}", on_click=place, args=(c,), disabled=c not in legal, width="stretch")
+                    col.button(plain_call(c), key=f"bid{c}", on_click=place, args=(c, replace), disabled=c not in legal,
+                               width="stretch")
             row = st.columns(5, width=330)
             row[0].button("Undo", key="undo", on_click=undo, disabled=not st.session_state["calls"], width="stretch",
                           help="Take the last call of the auction back")
@@ -459,13 +471,15 @@ with right:
         tips.append("  \n".join(lines))
     auction_grid(calls, step, dealer, seat, vul, tips)
     tail = " Click a call to see the auction up to it. Hover over a bid to see bidding info." if n else ""
-    if finished:
-        st.caption("The auction is over." + tail)
-    elif step < n:
-        st.caption(f"{SEAT_NAME[to_call]} to call. Gray calls have not been bid yet." + tail)
+    # the caption is about the call that was clicked (the last one seen), not about the player after it
+    chosen = f"{SEAT_NAME[SEATS[(SEATS.index(dealer) + step - 1) % 4]]}'s {plain_call(seen[-1])} selected. " if step else ""
+    if step < n:
+        st.caption(chosen + "Gray calls have not been bid yet." + tail)
+    elif finished:
+        st.caption(chosen + "The auction is over." + tail)
     else:
-        st.caption(f"{SEAT_NAME[to_call]} to call." + tail)
-    bidding_box(seen, to_call, finished, edited, differs_at)
+        st.caption(chosen + f"{SEAT_NAME[to_call]} to call." + tail)
+    bidding_box(seen, dealer, finished, edited, differs_at)
 
 current = contract_of(list(seen), dealer)
 top = st.columns(4)
