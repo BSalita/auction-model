@@ -12,11 +12,17 @@ Where things are found (environment variables, each optional):
   AUCTION_MODEL_TORCH      folder holding the torch package if it is not importable
   AUCTION_EXPLORER_FIELD   Brill field file (default ../data/brill-replay/field.jsonl)
   AUCTION_EXPLORER_DD      double-dummy results of those boards (default ../data/brill-replay/board-table/dd.json)
+  AUCTION_EXPLORER_BEN_API BEN's REST API, asked what each call shows (default https://ben.7nt.info/gameapi/8085;
+                           empty = no meanings in the tooltips)
 """
+import concurrent.futures
 import json
 import os
 import pathlib
 import sys
+import time
+import urllib.parse
+import urllib.request
 
 import altair as alt
 import numpy as np
@@ -49,6 +55,7 @@ RUNS = [os.environ.get("AUCTION_MODEL_RUN"), r"E:\bridge\data\auction-model\runs
         "/var/lib/ben/auction-model/runs/v1-brill", "/data/runs/v1-brill"]
 FIELD = os.environ.get("AUCTION_EXPLORER_FIELD") or str(HERE.parent / "data" / "brill-replay" / "field.jsonl")
 DD = os.environ.get("AUCTION_EXPLORER_DD") or str(HERE.parent / "data" / "brill-replay" / "board-table" / "dd.json")
+BEN_API = os.environ.get("AUCTION_EXPLORER_BEN_API", "https://ben.7nt.info/gameapi/8085").rstrip("/")
 RULE_NAME = {"toward": "Toward a contract of ours", "interfere": "Interfere with their auction",
              "interfere2": "Interfere (priced with the robots' doubling)", "sacrifice": "Sacrifice or push",
              "sacrifice2": "Sacrifice (priced with the robots' reaction)", "double": "Penalty double",
@@ -196,8 +203,46 @@ def rewind(k):
     st.session_state["step"] = k
 
 
-def auction_grid(calls, step, dealer, seat, vul):
-    """The auction as four columns of buttons (West first); a click on a call sets 'Calls seen' to that call."""
+@st.cache_resource
+def meaning_store():
+    """Meanings already fetched, shared by all sessions: {(dealer, vul, calls so far): text}; 'down' = time of the last failure."""
+    return {"down": 0.0}
+
+
+def fetch_meaning(dealer, vul, prefix):
+    """What the last call of prefix shows, from BEN's rule book (its /explain service): '5+ ♠; 11-20 HCP'."""
+    to_ctx = {"PASS": "--", "X": "Db", "XX": "Rd"}
+    by = SEATS[(SEATS.index(dealer) + len(prefix) - 1) % 4]
+    query = urllib.parse.urlencode({"seat": by, "dealer": dealer, "vul": vul, "ctx": "".join(to_ctx.get(c, c) for c in prefix)})
+    request = urllib.request.Request(f"{BEN_API}/explain?{query}", headers={"User-Agent": "auction-explorer"})
+    with urllib.request.urlopen(request, timeout=5) as answer:
+        text = json.load(answer).get("explanation") or ""
+    name, _, shows = text.partition(" -- ")
+    for s in "SHDC":
+        name, shows = name.replace("!" + s, SYMBOL[s]), shows.replace("!" + s, SYMBOL[s])
+    shows = shows.strip(" ;")
+    return ": ".join(x for x in (name.strip(), shows) if x)
+
+
+def meanings(dealer, vul, calls):
+    """The meaning of every call ('' where it is not known). Asks only for what is not stored yet, in parallel;
+    after a failure the service is left alone for a minute, so a page never waits on it call after call."""
+    store = meaning_store()
+    keys = [(dealer, vul, tuple(calls[:i + 1])) for i in range(len(calls))]
+    missing = [k for k in keys if k not in store]
+    if missing and BEN_API and time.time() - store["down"] > 60:
+        try:
+            with concurrent.futures.ThreadPoolExecutor(8) as pool:
+                for k, text in zip(missing, pool.map(lambda k: fetch_meaning(*k), missing)):
+                    store[k] = text
+        except Exception:
+            store["down"] = time.time()
+    return [store.get(k, "") for k in keys]
+
+
+def auction_grid(calls, step, dealer, seat, vul, tips):
+    """The auction as four columns of buttons (West first); a click on a call sets 'Calls seen' to that call.
+    tips: the text shown when the pointer rests on each call."""
     st.markdown("""<style>
         .st-key-auction [data-testid="stVerticalBlock"] {gap: 0.1rem}
         .st-key-auction button {min-height: 1.7rem; padding: 0 0.5rem; font-family: monospace}
@@ -215,7 +260,7 @@ def auction_grid(calls, step, dealer, seat, vul):
         for i, c in enumerate(calls):
             cols[(lead + i) % 4].button(button_call(c, i < step), key=f"call{i}", on_click=rewind, args=(i + 1,),
                                         type="secondary" if i + 1 == step else "tertiary",
-                                        help=f"See the auction up to this call ({i + 1} seen)")
+                                        help=tips[i])
         if calls:
             st.button("Before any call", key="call_none", on_click=rewind, args=(0,),
                       type="secondary" if step == 0 else "tertiary")
@@ -331,6 +376,7 @@ finished = over(list(seen))
 now = glance(run, hand, seat, dealer, vul, seen)
 sign = 1 if seat in "NS" else -1                     # the files give North-South scores
 my_side, their_side = ("NS", "EW") if seat in "NS" else ("EW", "NS")
+history = [glance(run, hand, seat, dealer, vul, tuple(calls[:k]))["par_mean"] for k in range(n + 1)]   # expected par, call by call
 
 left, right = st.columns([1, 1.3])
 with left:
@@ -346,8 +392,18 @@ with left:
         st.markdown(hand_html(hand, SEAT_NAME[seat], True, side_vul(vul, seat)), unsafe_allow_html=True)
     st.caption(f"{SEAT_NAME[dealer]} deals, vulnerable: {vul}, {'matchpoints' if matchpoint else 'IMPs'}.")
 with right:
-    auction_grid(calls, step, dealer, seat, vul)
-    tail = " Click a call to see the auction up to it." if n else ""
+    shows = meanings(dealer, vul, calls)
+    tips = []
+    for i, c in enumerate(calls):
+        by = SEATS[(SEATS.index(dealer) + i) % 4]
+        lines = [f"**{plain_call(c)} by {SEAT_NAME[by]}**"]
+        if shows[i]:
+            lines.append(f"Shows: {shows[i]}")
+        lines.append(f"Expected par for {my_side[0]}-{my_side[1]}: {history[i]:+.0f} before, {history[i + 1]:+.0f} after")
+        tips.append("  \n".join(lines))
+    auction_grid(calls, step, dealer, seat, vul, tips)
+    tail = (" Click a call to see the auction up to it. Rest the pointer on a call for what it shows in the 2/1 rule book "
+            "BEN uses (the player may have meant something else) and how the model's par moved.") if n else ""
     if finished:
         st.caption("The auction is over." + tail)
     elif step < n:
@@ -409,7 +465,6 @@ with tab_tricks:
                       .map(shade(0, 1), subset=["Makes"]), width="stretch", hide_index=True)
 
 with tab_par:
-    history = [glance(run, hand, seat, dealer, vul, tuple(calls[:k]))["par_mean"] for k in range(n + 1)]
     trend = pd.DataFrame({"Calls seen": range(n + 1), "Expected par": history,
                           "After": ["before any call"] + [plain_call(c) for c in calls]})
     cols = st.columns(2)
