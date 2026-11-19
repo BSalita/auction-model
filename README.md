@@ -487,3 +487,44 @@ South's viewpoint on those 151 rows, before any call -> auction over:
   (7 better, 9 worse); against the baseline +0.046 +-0.019 (`v1-brill`: +0.048 +-0.019). The two models bid the same,
   so prod keeps `v1-brill`. Replay `data\brill-replay\live\10k\tac-ds-all`, scores `live\10k-tac-report\vs-tac-ds-all`.
 - A retrain is worth repeating when it can be tested: hold the newest week or two out, train on the rest.
+
+## The missing North-dealer boards: `v3`, `v3-brill` (2026-11-19)
+
+Found in the explorer on a Brill board (South KQ732.Q87.A6.KQ3, North deals): after North and East pass, `v1-brill`
+gave North-South an expected par of -2 (before any call +331). Cause: `bbo_mldf_augmented.parquet` has no board dealt
+by North. The raw downloads (.lin files under `E:\bridge\data\bbo\data\<player>\`) do have boards 1, 5, 9, 13; they
+were lost when the first table (`bbo_epdf.parquet`) was built. The model's inputs are relative to the seat, so what
+it never saw was "the best hand sits opposite the dealer": with partner dealing, the viewer was never the strong hand.
+
+- `extract_bbo_lin.py scan` reads the .lin files (30% of the 55,098 player folders, 7.4M files, 30 minutes with 56
+  processes: Windows allows at most 61 pool workers): 946,865 distinct deal + auction rows on 344,238 North-dealer
+  deals. `dd` solves them with endplay (234 deals a second, 25 minutes; tricks and par equal the old file's on 300 of
+  300 old rows checked). `build` writes `bbo_north_{train,test}.npz` and `bbo4_{train,test}.npz` = the old rows plus
+  these (5,918,594 training rows; by dealer N 926,284, E 1,704,839, S 1,689,788, W 1,597,683).
+- `ft4.sh`: `v3` = `v1`'s recipe on `bbo4_train.npz` (60 minutes), `v3-brill` = `v3` + the `v1-brill` fine-tuning.
+
+South's view, error of expected tricks / of expected par at the end of the auction (1-4 calls seen in brackets):
+
+| Deals | `v1-brill` | `v3-brill` |
+|---|---|---|
+| BBO, North deals, held out (19,840 rows) | 1.15 / 234 (1.49 / 287) | 1.12 / 221 (1.45 / 273) |
+| BBO, other dealers, held out (108,763) | 1.15 / 252 (1.51 / 322) | 1.14 / 248 (1.51 / 321) |
+| Brill 6-17 November (1,938) | 1.19 / 253 (1.54 / 329) | 1.18 / 246 (1.53 / 323) |
+| Brill 18 November (151) | 1.00 / 158 (1.27 / 228) | 0.96 / 163 (1.25 / 224) |
+
+- The board: after the two passes `v3-brill` expects +152 (real par +120); call by call +104 to +228 where `v1-brill`
+  went from -10 to +202.
+- Still open: dealer and vulnerability go together through the board number, and BBO events seldom pass board 12, so
+  four combinations are nearly absent from training (North deals + both vulnerable 1,549 rows, East + nobody 3,204,
+  South + North-South only 3,112, West + East-West only 3,025). With North dealing and both vulnerable the same hand
+  still falls to -15 after the two passes. Brill's events use boards 1 to 8 only, where this does not arise.
+- All BBO deals, the new ones too, are "best hand" deals: South has 15.1-15.2 points on average and the best hand on
+  94-95% (Brill events 12.5 and 57%, random deals 10 and 25%). `bias_check.py` measures what that does at the end of
+  the auction on deals the model did not train on (South's view, `v1-brill` and `v3-brill` alike): East-West final
+  contracts are given 52% to make on Brill deals and make 54% (random deals 63% against 66%), North-South contracts
+  60% against 63% (64% against 65%); expected tricks are right within 0.05. So no tilt toward North-South, a slight
+  pessimism about every contract.
+- In BEN, 10,000 live deals, doubles and sacrifices (29 minutes, 75 new requests): `v3-brill` against `v1-brill`
+  -0.000 +-0.009 IMPs a deal, 51 deals changed (27 better, 24 worse); against the baseline +0.048 +-0.019 for both.
+  By dealer, and on the four rare combinations, no difference either. Replay `live\10k\tac-ds-v3`, scores
+  `live\10k-tac-report\v3`.
