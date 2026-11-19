@@ -396,7 +396,8 @@ with right:
         lines = [f"**{plain_call(c)} by {SEAT_NAME[by]}**"]
         if shows[i]:
             lines.append(f"Shows: {shows[i]}")
-        lines.append(f"Expected par for {my_side[0]}-{my_side[1]} after this call: {history[i + 1]:+.0f} (before it: {history[i]:+.0f})")
+        # the number in brackets is the expected par before this call
+        lines.append(f"Expected {my_side[0]}-{my_side[1]} par is {history[i + 1]:+.0f} (usually {history[i]:+.0f})")
         tips.append("  \n".join(lines))
     auction_grid(calls, step, dealer, seat, vul, tips)
     tail = " Click a call to see the auction up to it. Hover over a bid to see bidding info." if n else ""
