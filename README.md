@@ -15,6 +15,105 @@ From one hand and the auction so far (any seat, any point of the bidding) the mo
 Purpose: BEN's bidding decisions (the Brill events). Training data so far: BBO robot tournaments
 (three GIB robots and one human at South).
 
+## Reproducing the models
+
+The trained models and the data they were trained on are **not in this repository**. This section lists what is
+needed and the commands that turn it into each model. `v3-brill` is the model in use.
+
+### 1. Software
+
+- Python 3.12 and `pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128`
+  (PyTorch 2.11.0 for CUDA 12.8; the versions used are in `requirements.txt`).
+- A GPU. The models were trained on an RTX 5080 (16 GB); training held 10.3 GB at its peak.
+
+### 2. Data
+
+Three sources. Nothing else is read.
+
+| Source | Files | Needed for | Where it comes from |
+|--------|-------|------------|---------------------|
+| BBO robot tournaments, as a table | `BBO\data\bbo_mldf_augmented.parquet`: one row per table played, with the columns `PBN`, `Dealer`, `Vul`, `bid` (the list of calls), `Par_NS` and the 20 double-dummy columns `DD_N_S` .. `DD_W_N` (declarer, strain) | every model | Built by the author from downloaded BBO hand records (events with one human at South and three GIB robots). Not public |
+| The same events as raw downloads | `BBO\data\<player>\*.lin` | `v3`, `v3-brill` (the boards dealt by North, which the table lacks) | Downloaded from BBO. Not public |
+| Brill daily events | `BRILL\field.jsonl` (one line per event and board: deal, dealer, vulnerability, date, every table's auction) and `BRILL\board-table\dd.json` (double-dummy tricks and par of every deal) | the `-brill` models and all checks on Brill deals | Read from brill.aalborgdata.dk with `scripts/match/brill/fetch_brill_field.py` (needs a Brill sign-in) and `brill_board_table.py`, both on branch `ab-match` of BSalita/ben. The models used the events of 15 August to 17 November 2026 |
+
+In `dd.json` a deal's key is `deal|dealer|vul` as written in `field.jsonl`; its value holds `tricks` (20 numbers
+keyed strain + declarer, `SN` = spades by North, `NE` = notrump by East) and `par_score` (North-South's).
+
+Three folders are named by environment variables (`paths.py`; the defaults are the author's machine):
+
+| Variable | Folder |
+|----------|--------|
+| `AUCTION_MODEL_BBO` | `BBO` above |
+| `AUCTION_MODEL_BRILL` | `BRILL` above |
+| `AUCTION_MODEL_DATA` | `DATA`: where the training files (`*.npz`) and the models (`runs\NAME\model.pt`) go |
+
+### 3. Build the training files
+
+Run in this folder. `DATA` is the folder of `AUCTION_MODEL_DATA`.
+
+| Step | Command | Writes to `DATA` |
+|------|---------|------------------|
+| 1 | `python extract_bbo.py` | `bbo_train.npz` (4,992,310 rows), `bbo_test.npz` (108,763 rows: the held-out deals) |
+| 2 | `python extract_brill.py` | `brill.npz` (10,197 rows with the events to 18 November 2026) |
+| 3 | `python split_brill.py --data DATA --until 20261117` | `brill_train.npz` (8,108 rows, to 5 November), `brill_test.npz` (1,938 rows, 6 to 17 November), `brill_old.npz` (both together), `brill_new.npz` (later events), `mix_train.npz` |
+| 4 | copy `bbo_test.npz` to `bbo_heldout.npz` | a second name for the held-out BBO deals, so that a check does not overwrite a run's `eval.txt` |
+| 5, for `v3` only | `python extract_bbo_lin.py scan --out DATA\lin`, then the same with `dd`, then with `build` | `bbo_north_train.npz`, `bbo_north_test.npz`, `bbo4_train.npz` (5,918,594 rows), `bbo4_test.npz` (128,603 rows) |
+
+Step 5 took 30 minutes (`scan`, 56 processes) and 25 minutes (`dd`). The held-out BBO deals are picked by polars'
+`hash`; use the polars version of `requirements.txt` to get the same deals.
+
+### 4. Train
+
+`/data` below is the `DATA` folder. Every setting not shown is `train.py`'s default (batch 768, learning rate 4e-4,
+1,000 warm-up steps, width 256, 6 + 4 layers, seed 1).
+
+| Model | Command | Time on the RTX 5080 |
+|-------|---------|----------------------|
+| `v1` (BBO table) | `python train.py --data /data --run /data/runs/v1 --epochs 3` | 50 minutes |
+| `v1-brill` | `python train.py --data /data --run /data/runs/v1-brill --init /data/runs/v1/model.pt --train-file brill_train.npz --test-file brill_test.npz --batch 128 --lr 3e-5 --warmup 20 --epochs 2 --eval-rows 0` | under a minute |
+| `v3` (BBO table + North-dealer boards) | `python train.py --data /data --run /data/runs/v3 --epochs 3 --train-file bbo4_train.npz --test-file bbo4_test.npz` | 60 minutes |
+| `v3-brill` | `python train.py --data /data --run /data/runs/v3-brill --init /data/runs/v3/model.pt --train-file brill_train.npz --test-file brill_test.npz --batch 128 --lr 3e-5 --warmup 20 --epochs 2 --eval-rows 0` | under a minute |
+| `v2-big` | `python train.py --data /data --run /data/runs/v2-big --epochs 3 --batch 384 --lr 3e-4 --d 384 --enc 8 --dec 6` | 109 minutes |
+| `v1-brill-old`, `v1-brill-all` | `v1-brill`'s command with `--train-file brill_old.npz` or `brill.npz`, and `--test-file brill_new.npz` | under a minute |
+
+The shell scripts run the same commands on the author's machine: `ft4.sh` (`v3`, `v3-brill` and their checks),
+`ft3.sh` (`v1-brill-old`, `v1-brill-all`), `ft.sh` and `ft2.sh` (the trials `v1-brill`'s settings were chosen from).
+They expect this folder at `/code`, the data at `/data` and PyTorch in `/var/lib/ben/torch-pkgs`: edit their first
+lines for another machine.
+
+### 5. Check the result
+
+When training ends, `train.py` writes the held-out table for its `--test-file` to `runs\NAME\eval.txt`. For a
+table on another file (written to `runs\NAME\eval_brill_test.txt` here), and a self-test of the inference code:
+
+```
+python train.py --data /data --run /data/runs/NAME --eval-only --test-file brill_test.npz --eval-rows 0
+python infer.py --run /data/runs/NAME --selftest
+```
+
+What the author's models give, in the block "South's viewpoint" of that table (rows `0 calls` and `auction over`):
+
+| Model, held-out file | Error of expected tricks (`DD mae`) | Error of expected par (`par mae`) |
+|---|---|---|
+| `v1`, `bbo_test.npz` (its `eval.txt`) | 1.727 -> 1.136 | 364.3 -> 247.5 |
+| `v1-brill`, `brill_test.npz` (its `eval.txt`) | 1.86 -> 1.19 | 414 -> 253 |
+| `v3-brill`, `brill_test.npz` (its `eval.txt`) | 1.855 -> 1.175 | 411.9 -> 246.4 |
+
+Two things are not known. No model was trained twice, so how closely a second run repeats these numbers was not
+measured. And `v1` was stopped at step 7,000 of 20,301 and continued (`train.py --resume`), so it is not one
+uninterrupted run; `v3` is.
+
+### Tests inside BEN
+
+The later sections measure the models in BEN's bidding. Those need more than the models:
+
+- BEN: BSalita/ben, commit `3038b293` or later on `main` (the model's keys in the settings file). The test scripts
+  (`scripts/match/ab_match.py`, `scripts/match/brill/brill_replay.py`, `brill_live.py`, `score_brill_replay.py`,
+  `brill_autoplay.py`) are on its branch `ab-match`.
+- The settings files of every test: the folder `conf` here, with what each one changes and needs (`conf/README.md`).
+- The live tests ask Brill's public bidding service for the other three seats' calls, so they depend on that
+  service and on the robots it runs that day.
+
 ## Files
 
 | File | What |
@@ -30,12 +129,17 @@ Purpose: BEN's bidding decisions (the Brill events). Training data so far: BBO r
 | `split_brill.py` | Brill deals by date -> `brill_train.npz`, `brill_test.npz`, and the BBO + Brill `mix_train.npz` |
 | `ft.sh`, `ft2.sh` | The Brill fine-tuning trials (`train.py --init RUN/model.pt --train-file ...`) |
 | `bench.py`, `bench2.py` | Step-time measurements |
+| `paths.py` | The data folders of the Windows-side scripts and the environment variables that change them |
+| `requirements.txt` | The package versions used |
+| `conf\` | The BEN settings files of the tests, and `conf\README.md` on what each changes |
 
-Data and runs are outside OneDrive: `E:\bridge\data\auction-model` (`runs\<name>\model.pt`, `train.log`, `eval*.txt`, `sets_*.txt`).
+Data and runs are outside this folder: on the author's machine `E:\bridge\data\auction-model` (`runs\<name>\model.pt`,
+`train.log`, `eval*.txt`, `sets_*.txt`); elsewhere the folder of `AUCTION_MODEL_DATA`.
 
-## Running
+## Running on the author's machine
 
-Training needs PyTorch, which is in the `ben-state` volume. Use a container of its own:
+(For another machine see "Reproducing the models" above.) Training needs PyTorch, which is in the `ben-state`
+volume. Use a container of its own:
 
 ```
 wslc run -d --rm --name auction-model --gpus all -m 48G -v ben-state:/var/lib/ben -v "D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\auction-model:/code" -v "E:\bridge\data\auction-model:/data" -w /code --entrypoint sleep ben:latest infinity
@@ -124,7 +228,7 @@ South's viewpoint on `brill_test.npz`, before any call -> auction over:
 
 ## Wiring into BEN's bidder (2026-11-18)
 
-In `src\ben` (branch `ab-match`, uncommitted): new file `src\auction_model_deals.py`, three optional keys read in
+In `src\ben` (BSalita/ben, on `main` since commit `3038b293`): new file `src\auction_model_deals.py`, three optional keys read in
 `Sample.from_conf`, and two short branches in `botbidder.py`. With no key set BEN behaves as before.
 
 ```
@@ -320,7 +424,7 @@ replays, with `BEN_ROOT=/ben AUCTION_MODEL_CODE=/code PYTHONPATH=/var/lib/ben/to
 
 ### Wired into BEN as extra candidates
 
-In `src\ben` (branch `ab-match`, uncommitted; off unless the keys are set): `auction_model_deals.tactical()`,
+In `src\ben` (BSalita/ben, on `main` since commit `3038b293`; off unless the keys are set): `auction_model_deals.tactical()`,
 two keys read in `Sample.from_conf`, a branch at the end of `get_bid_candidates`, and `do_rollout` no longer
 skips the search when such a candidate is present (it did whenever the network's first choice was above
 `no_search_threshold`, which is why the par guard's call was never looked at under `old`).

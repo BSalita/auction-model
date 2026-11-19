@@ -1,0 +1,17 @@
+# The versions the results in README.md were made with, on Python 3.12.
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128
+
+# Training, checks and inference: train.py, eval_sets.py, infer.py, model.py, tactical.py
+torch==2.11.0        # the CUDA 12.8 build, 2.11.0+cu128
+numpy>=2.0.2         # 2.0.2 where the models were trained, 2.5.2 where the training files were built
+
+# Building the training files: extract_bbo.py, extract_bbo_lin.py (extract_brill.py and split_brill.py need numpy only)
+polars==2.0.0        # also picks the held-out deals (PBN.hash); another version may pick other deals
+endplay==0.5.12      # double dummy for the North-dealer boards (extract_bbo_lin.py dd)
+
+# The explorer page: streamlit_app_auction_explorer.py
+streamlit==1.62.0
+pandas==3.0.5
+
+# Not listed: the scripts that run BEN (ben_samples.py, ben_adapter_test.py, tactical_count.py, guard_count.py,
+# mp_double_points.py, keycards.py) need BEN and its own environment; see "Tests inside BEN" in README.md.

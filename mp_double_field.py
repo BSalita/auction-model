@@ -1,9 +1,10 @@
 """The matchpoint double: Brill MP events, real field. For every table where East-West declare an undoubled contract,
 matchpoint North-South's score against the other tables of the board for four cases: contract just makes / one down,
 undoubled / doubled. Shows where doubling has little to lose and what it would have gained with the tricks really taken."""
-import json, sys
+import json, os, sys
 import numpy as np
-sys.path.insert(0, r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\auction-model")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths
 from scoring import STRAINS, contract_score
 from tactical import SEATS, GAME, Auction
 VUL = {"None": [False, False], "NS": [True, False], "EW": [False, True], "All": [True, True]}
@@ -13,7 +14,7 @@ def mp(s, field):
     return float(((f < s).sum() + 0.5 * (f == s).sum()) / len(f))
 
 rows = []
-for line in open(r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\data\brill-replay\field.jsonl"):
+for line in open(os.path.join(paths.BRILL, "field.jsonl")):
     b = json.loads(line)
     if b["scoring"] != "MP" or len(b["tables"]) < 8:
         continue

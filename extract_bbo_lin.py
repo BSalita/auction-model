@@ -5,7 +5,7 @@ from the downloads onwards), while the downloads have them. A model trained on t
 opposite the dealer, and so reads "my partner dealt and passed" as "an opponent is stronger than I am".
 
   python extract_bbo_lin.py scan  --out DIR [--share 1.0] [--workers 64] [--limit-dirs N]
-        reads the .lin files under E:\\bridge\\data\\bbo\\data\\<player>\\ and writes DIR\\lin_north.parquet:
+        reads the .lin files under data\\<player>\\ of the BBO folder (paths.py) and writes DIR\\lin_north.parquet:
         one row per distinct deal + vulnerability + auction dealt by North (PBN, Vul, auction, n tables)
   python extract_bbo_lin.py dd    --out DIR [--workers 100]
         double-dummy tricks and par of every distinct deal -> DIR\\lin_north_dd.parquet (resumable)
@@ -24,7 +24,9 @@ import time
 
 import numpy as np
 
-RAW = r"E:\bridge\data\bbo\data"
+import paths
+
+RAW = os.path.join(paths.BBO, "data")
 SEATS = "NESW"
 LIN_VUL = {"o": "None", "0": "None", "n": "N_S", "e": "E_W", "b": "Both"}
 

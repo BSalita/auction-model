@@ -20,9 +20,11 @@ import sys
 
 import numpy as np
 
+import paths
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = r"E:\bridge\data\auction-model"
-LIVE = os.path.join(HERE, "..", "data", "brill-replay", "live")
+DATA = paths.DATA
+LIVE = os.path.join(paths.BRILL, "live")
 SEATS, RANKS = "NESW", "AKQJT98765432"
 
 

@@ -11,10 +11,11 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.insert(0, r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\auction-model")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths  # noqa: E402
 from tactical import GAME, SEATS, Auction  # noqa: E402
 
-BR = r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\data\brill-replay"
+BR = paths.BRILL
 
 
 def points(deal):
@@ -32,7 +33,7 @@ def auctions(mode, names):
                 k = (r["tournament_id"], r["board"])
                 yield k, deals[k], dd[f"{k[0]}|{k[1]}"], r["walk"]
     else:
-        dd = json.load(open(r"E:\bridge\data\auction-model\tactical\dd_brill.json"))
+        dd = json.load(open(os.path.join(paths.DATA, "tactical", "dd_brill.json")))
         for line in open(BR + r"\field.jsonl"):
             b = json.loads(line)
             d = dd.get(f"{b['tournament_id']}|{b['board']}")

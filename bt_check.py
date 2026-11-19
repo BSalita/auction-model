@@ -31,8 +31,10 @@ import time
 
 import numpy as np
 
-BT = pathlib.Path("E:/bridge/data/bbo/bidding/bbo_bt_seat1.parquet")
-DATA = pathlib.Path("E:/bridge/data/auction-model")
+import paths
+
+BT = pathlib.Path(paths.BBO) / "bidding" / "bbo_bt_seat1.parquet"
+DATA = pathlib.Path(paths.DATA)
 SUITS = "SHDC"
 RANKS = "AKQJT98765432"
 REL = ("LHO", "partner", "RHO")

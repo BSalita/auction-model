@@ -1,8 +1,8 @@
 """Brill daily events -> the same arrays as extract_bbo.py (one row per distinct deal + auction).
 
 South is the entrant (a robot or a human); North, East and West are the Brill robots.
-Reads src\\data\\brill-replay\\field.jsonl and board-table\\dd.json, writes E:\\bridge\\data\\auction-model\\brill.npz
-with the extra arrays `date` (yyyymmdd) and `count` (tables with that auction).
+Reads field.jsonl and board-table\\dd.json of the Brill folder, writes brill.npz to the data folder (paths.py names
+both folders), with the extra arrays `date` (yyyymmdd) and `count` (tables with that auction).
 """
 import json
 import os
@@ -10,10 +10,11 @@ from collections import Counter
 
 import numpy as np
 
+import paths
 from extract_bbo import CALL_TOKEN, MAX_CALLS, SEATS, parse_auction, parse_pbn
 
-SRC = r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\data\brill-replay"
-OUT = r"E:\bridge\data\auction-model\brill.npz"
+SRC = paths.BRILL
+OUT = os.path.join(paths.DATA, "brill.npz")
 VUL = {"None": 0, "NS": 1, "N_S": 1, "EW": 2, "E_W": 2, "All": 3, "Both": 3}
 CALL = {"P": "p", "X": "d", "XX": "r", "PASS": "p"}
 

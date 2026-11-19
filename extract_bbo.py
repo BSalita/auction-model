@@ -1,6 +1,7 @@
 """Extract distinct (deal, auction) pairs from the BBO robot file into compact arrays.
 
-Output (E:\\bridge\\data\\auction-model\\bbo_{train,test}.npz), one row per distinct deal + dealer + vul + auction:
+Reads data\\bbo_mldf_augmented.parquet of the BBO folder, writes bbo_{train,test}.npz to the data folder (paths.py
+names both folders). One row per distinct deal + dealer + vul + auction:
   owner   (N, 52) uint8  seat holding each card, 0..3 = N,E,S,W; card index = suit*13 + rank,
                          suits S,H,D,C, ranks A,K,Q,J,T,9..2
   dealer  (N,)    uint8  0..3 = N,E,S,W
@@ -19,8 +20,10 @@ import time
 import numpy as np
 import polars as pl
 
-SRC = r"E:\bridge\data\bbo\data\bbo_mldf_augmented.parquet"
-OUT = r"E:\bridge\data\auction-model"
+import paths
+
+SRC = os.path.join(paths.BBO, "data", "bbo_mldf_augmented.parquet")
+OUT = paths.DATA
 SEATS = "NESW"
 DD_STRAINS = "SHDCN"
 RANKS = "AKQJT98765432"

@@ -13,7 +13,7 @@ robot North after it) chose:
   other                           anything else (another strain, the other side declares, passed out); left out of the IMPs
 IMPs lost = IMPs short of the double-dummy right one of the two contracts on the real deal, the same measure as
 keycards.py gives "choosing by the odds" and "choosing with the key set known" at that decision point.
-Output: `E:\\bridge\\data\\auction-model\\keycards\\entrants.txt`.
+Output: `keycards\\entrants.txt` in the data folder (paths.py).
 """
 import collections
 import json
@@ -21,10 +21,11 @@ import pathlib
 
 import numpy as np
 
+import paths
 from extract_bbo import CALL_TOKEN, parse_pbn
 
-DATA = pathlib.Path("E:/bridge/data/auction-model")
-REPLAY = pathlib.Path(__file__).resolve().parent.parent / "data" / "brill-replay"
+DATA = pathlib.Path(paths.DATA)
+REPLAY = pathlib.Path(paths.BRILL)
 TAGS = {"test": "brill_test.npz", "train-v1": "brill_train.npz"}
 VUL = {"None": 0, "NS": 1, "N_S": 1, "EW": 2, "E_W": 2, "All": 3, "Both": 3}
 CALL = {"P": "p", "X": "d", "XX": "r", "PASS": "p"}

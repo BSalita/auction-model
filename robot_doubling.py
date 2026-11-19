@@ -1,12 +1,13 @@
 """How often do the Brill robots double a contract of ours that fails, and how often are failing contracts of theirs doubled?
 Final contracts of the live replays (South = BEN config, N/E/W = Brill's service), double dummy."""
-import json, sys
+import json, os, sys
 from collections import defaultdict
-sys.path.insert(0, r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\auction-model")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths
 from scoring import STRAINS, contract_score
 from tactical import SEATS, Auction
 VUL = {"None": [False, False], "NS": [True, False], "EW": [False, True], "All": [True, True]}
-L = r"D:\OneDrive\sw\bridge\ML-Contract-Bridge\src\data\brill-replay\live"
+L = os.path.join(paths.BRILL, "live")
 deals = {(b["tournament_id"], b["board"]): b for b in map(json.loads, open(L + r"\deals10k.jsonl"))}
 dd = json.load(open(L + r"\10k-report\dd.json"))
 seen, rows = set(), []
