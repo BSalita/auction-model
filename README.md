@@ -531,3 +531,20 @@ South's view, error of expected tricks / of expected par at the end of the aucti
 - On prod since 2026-11-19 13:12: the robot and the explorer use `v3-brill` (`v1-brill` kept in the volume). Check
   through the public API: on 75 positions, 50 of them where the two models' runs call differently, prod made
   `v3-brill`'s call every time.
+
+### Real card play: result (2026-11-19)
+
+`tactical_autoplay.py` on the 197 deals where doubles-and-sacrifices (`tac-ds`, model `v1-brill`) and its baseline
+end in different contracts; Brill's /autoplay played both contracts of 178 of them (20 contracts never came back:
+gateway time-outs). New minus baseline, North-South view, IMPs per changed deal:
+
+| Deals | n | Real play | Double dummy |
+|---|---|---|---|
+| all | 178 | +2.02 +-1.09 (sum +360) | +2.56 +-0.94 (sum +456) |
+| a double of the same contract | 75 | +1.01 +-1.80 | +3.15 +-1.41 |
+| a different contract (sacrifice, push, ...) | 103 | +2.76 +-1.35 | +2.14 +-1.26 |
+
+Better / same / worse: 107 / 11 / 60 in real play, 115 / 9 / 54 double dummy. Declarers take 0.2 tricks more than
+double dummy on average (North-South +0.18, East-West +0.23). So the gain holds in real play at about four fifths of
+its double-dummy size (about +0.04 IMPs a deal over all deals); the different contracts carry it, the doubles alone
+are not shown to gain in real play.
