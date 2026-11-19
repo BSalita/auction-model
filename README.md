@@ -528,3 +528,6 @@ South's view, error of expected tricks / of expected par at the end of the aucti
   -0.000 +-0.009 IMPs a deal, 51 deals changed (27 better, 24 worse); against the baseline +0.048 +-0.019 for both.
   By dealer, and on the four rare combinations, no difference either. Replay `live\10k\tac-ds-v3`, scores
   `live\10k-tac-report\v3`.
+- On prod since 2026-11-19 13:12: the robot and the explorer use `v3-brill` (`v1-brill` kept in the volume). Check
+  through the public API: on 75 positions, 50 of them where the two models' runs call differently, prod made
+  `v3-brill`'s call every time.
