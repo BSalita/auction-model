@@ -219,7 +219,7 @@ if __name__ == "__main__":
     ap.add_argument("stage", choices=["scan", "dd", "build"])
     ap.add_argument("--out", required=True)
     ap.add_argument("--share", type=float, default=1.0)
-    ap.add_argument("--workers", type=int, default=64)
+    ap.add_argument("--workers", type=int, default=56, help="processes; Windows allows at most 61")
     ap.add_argument("--limit-dirs", type=int, default=0)
     a = ap.parse_args()
     {"scan": stage_scan, "dd": stage_dd, "build": stage_build}[a.stage](a)

@@ -23,8 +23,13 @@ needed and the commands that turn it into each model. `v3-brill` is the model in
 ### 1. Software
 
 - Python 3.12 and `pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu128`
-  (PyTorch 2.11.0 for CUDA 12.8; the versions used are in `requirements.txt`).
+  (PyTorch 2.11.0 for CUDA 12.8; the versions used are in `requirements.txt`). Into an empty folder this took
+  11 minutes and 7.3 GB.
 - A GPU. The models were trained on an RTX 5080 (16 GB); training held 10.3 GB at its peak.
+- Nothing else: no environment variable or other setting is needed for the commands below.
+
+This whole section was followed as written on 2026-11-20, from the three sources to the trained `v3` and
+`v3-brill`, with a fresh install. The results are under "Check the result".
 
 ### 2. Data
 
@@ -57,10 +62,15 @@ Run in this folder. `DATA` is the folder of `AUCTION_MODEL_DATA`.
 | 2 | `python extract_brill.py` | `brill.npz` (10,197 rows with the events to 18 November 2026) |
 | 3 | `python split_brill.py --data DATA --until 20261117` | `brill_train.npz` (8,108 rows, to 5 November), `brill_test.npz` (1,938 rows, 6 to 17 November), `brill_old.npz` (both together), `brill_new.npz` (later events), `mix_train.npz` |
 | 4 | copy `bbo_test.npz` to `bbo_heldout.npz` | a second name for the held-out BBO deals, so that a check does not overwrite a run's `eval.txt` |
-| 5, for `v3` only | `python extract_bbo_lin.py scan --out DATA\lin`, then the same with `dd`, then with `build` | `bbo_north_train.npz`, `bbo_north_test.npz`, `bbo4_train.npz` (5,918,594 rows), `bbo4_test.npz` (128,603 rows) |
+| 5, for `v3` only | `python extract_bbo_lin.py scan --out DATA\lin --share 0.3`, then `python extract_bbo_lin.py dd --out DATA\lin`, then `python extract_bbo_lin.py build --out DATA\lin` | `bbo_north_train.npz`, `bbo_north_test.npz`, `bbo4_train.npz` (5,918,594 rows), `bbo4_test.npz` (128,603 rows) |
 
-Step 5 took 30 minutes (`scan`, 56 processes) and 25 minutes (`dd`). The held-out BBO deals are picked by polars'
-`hash`; use the polars version of `requirements.txt` to get the same deals.
+- Step 5: `--share 0.3` reads 30% of the player folders (16,529 of 55,098; the same ones every time), which is what
+  the models were trained on: 946,865 rows on 344,238 deals. `scan` took 40 to 46 minutes and `dd` 25 minutes, with
+  56 processes each (`--workers`; Windows allows at most 61).
+- The held-out BBO deals are picked by polars' `hash`; use the polars version of `requirements.txt` to get the
+  same deals.
+- Rebuilt this way on 2026-11-20, all thirteen files are equal, array for array, to the ones the models were
+  trained on.
 
 ### 4. Train
 
@@ -71,7 +81,7 @@ Step 5 took 30 minutes (`scan`, 56 processes) and 25 minutes (`dd`). The held-ou
 |-------|---------|----------------------|
 | `v1` (BBO table) | `python train.py --data /data --run /data/runs/v1 --epochs 3` | 50 minutes |
 | `v1-brill` | `python train.py --data /data --run /data/runs/v1-brill --init /data/runs/v1/model.pt --train-file brill_train.npz --test-file brill_test.npz --batch 128 --lr 3e-5 --warmup 20 --epochs 2 --eval-rows 0` | under a minute |
-| `v3` (BBO table + North-dealer boards) | `python train.py --data /data --run /data/runs/v3 --epochs 3 --train-file bbo4_train.npz --test-file bbo4_test.npz` | 60 minutes |
+| `v3` (BBO table + North-dealer boards) | `python train.py --data /data --run /data/runs/v3 --epochs 3 --train-file bbo4_train.npz --test-file bbo4_test.npz` | 60 minutes (76 with other work on the machine) |
 | `v3-brill` | `python train.py --data /data --run /data/runs/v3-brill --init /data/runs/v3/model.pt --train-file brill_train.npz --test-file brill_test.npz --batch 128 --lr 3e-5 --warmup 20 --epochs 2 --eval-rows 0` | under a minute |
 | `v2-big` | `python train.py --data /data --run /data/runs/v2-big --epochs 3 --batch 384 --lr 3e-4 --d 384 --enc 8 --dec 6` | 109 minutes |
 | `v1-brill-old`, `v1-brill-all` | `v1-brill`'s command with `--train-file brill_old.npz` or `brill.npz`, and `--test-file brill_new.npz` | under a minute |
@@ -97,11 +107,29 @@ What the author's models give, in the block "South's viewpoint" of that table (r
 |---|---|---|
 | `v1`, `bbo_test.npz` (its `eval.txt`) | 1.727 -> 1.136 | 364.3 -> 247.5 |
 | `v1-brill`, `brill_test.npz` (its `eval.txt`) | 1.86 -> 1.19 | 414 -> 253 |
+| `v3`, `bbo4_test.npz` (its `eval.txt`) | 1.721 -> 1.129 | 357.1 -> 242.5 |
 | `v3-brill`, `brill_test.npz` (its `eval.txt`) | 1.855 -> 1.175 | 411.9 -> 246.4 |
 
-Two things are not known. No model was trained twice, so how closely a second run repeats these numbers was not
-measured. And `v1` was stopped at step 7,000 of 20,301 and continued (`train.py --resume`), so it is not one
-uninterrupted run; `v3` is.
+**A second training comes close, not to the same model.** `v3` and `v3-brill` were trained again on 2026-11-20
+with the commands above, from rebuilt files and a fresh install:
+
+| Model, held-out file | Rows | Tricks, first run | Tricks, second run | Par, first run | Par, second run |
+|---|---|---|---|---|---|
+| `v3`, `bbo4_test.npz` | 128,603 | 1.721 -> 1.129 | 1.721 -> 1.130 | 357.1 -> 242.5 | 357.1 -> 242.5 |
+| `v3`, `bbo_north_test.npz` | 19,840 | 1.700 -> 1.115 | 1.700 -> 1.115 | 322.3 -> 219.4 | 321.9 -> 219.9 |
+| `v3`, `brill_test.npz` | 1,938 | 1.874 -> 1.181 | 1.874 -> 1.182 | 420.0 -> 251.7 | 420.6 -> 251.9 |
+| `v3-brill`, `brill_test.npz` | 1,938 | 1.855 -> 1.175 | 1.855 -> 1.177 | 411.9 -> 246.4 | 412.3 -> 246.6 |
+| `v3-brill`, `bbo_north_test.npz` | 19,840 | 1.691 -> 1.122 | 1.691 -> 1.121 | 322.2 -> 221.2 | 321.4 -> 221.6 |
+| `v3-brill`, `bbo_heldout.npz` | 108,763 | 1.721 -> 1.140 | 1.721 -> 1.140 | 363.6 -> 248.4 | 363.2 -> 248.3 |
+
+- Over every row of those tables (all six auction lengths): on the BBO files the two runs differ by at most 0.002
+  tricks and 0.8 points of par; on the 1,938 Brill rows by at most 0.011 tricks and 3.6 points.
+- The training losses of the two `v3` runs are equal to the last printed digit for the first 200 steps and differ
+  in the third or fourth decimal from then on (at step 24,000 of 24,075: 1.9039 against 1.9039 for the tricks, 2.6104 against 2.6105 for par).
+  The weights of the two models are therefore not the same, and the BEN tests of the later sections were not
+  repeated with the second model.
+- `v1` was stopped at step 7,000 of 20,301 and continued (`train.py --resume`), so it is not one uninterrupted run;
+  `v3` is.
 
 ### Tests inside BEN
 
