@@ -152,6 +152,8 @@ The later sections measure the models in BEN's bidding. Those need more than the
 | `train.py` | Training and the held-out tables (`--eval-only`, `--test-file`) |
 | `eval_sets.py` | Are the probabilities honest: predicted probability against how often true, on held-out deals |
 | `infer.py` | `Predictor` / `Position`: DD table, contract scores, par, set lists, partial-set probability, sets that matter |
+| `hypothesis.py` | One position: P(a hypothesis about the hidden hands), contracts' value with and without it, value of asking bids |
+| `keycards_ask.py` | Value of RKCB at the game-or-slam decisions of `keycards.py`, on the real Brill deals |
 | `scoring.py` | Duplicate score table |
 | `post.sh` | Runs the held-out checks when a training run ends |
 | `split_brill.py` | Brill deals by date -> `brill_train.npz`, `brill_test.npz`, and the BBO + Brill `mix_train.npz` |
@@ -408,6 +410,58 @@ suit-or-3NT. Both board sets together, double dummy, IMPs lost to the right one 
 - Suit game or 3NT: nearly every entrant is a little worse than the odds (ours +0.09 +-0.22, BEN +0.21 +-0.24) and
   the key set would add 0.35 IMPs a decision: the one place with room, about 0.06 IMPs a board.
 - The most that knowing the key set for certain could add to our bidding is about 0.1 IMPs a board.
+
+## Hypotheses and asking bids (2026-11-22)
+
+`hypothesis.py` answers the bidder's own question at one position: "slam makes if partner has DA and CK: how likely
+is that, and should I bid it, sign off, or ask?" The model draws sets for the hand and auction (all calls seen,
+partner's and the opponents'), each set is completed to a deal and solved double dummy for the candidate contracts
+(1,000 deals in a few seconds with 16 solver processes; `--solver model` uses the model's trick odds given each set
+instead). The docstring has the hypothesis syntax (honors, suit lengths, counts of aces or keycards, points; "or"
+between alternatives).
+
+```
+python hypothesis.py --run /data/runs/v3-brill --hand AKQJ7.AKQ2.43.A5 --dealer S --vul None --auction "1S p 2S p" \
+    --contracts "4S 6S" --if "partner: DA CK" --if "partner: DA" --ask rkcb:S --ask "partner: DA CK @5S"
+```
+
+- `--if H`: P(H); each contract's expected score and chance of making on all deals, when H holds and when it does not;
+  the best contract each way; for every other contract what it gains each way and the P(H) at which it becomes
+  right; what knowing H for certain is worth over choosing by the odds; knowing the whole deal as the ceiling.
+- `--ask`: `rkcb:S` (1430), `rkcb0314:S`, `aces:S` (plain 4NT), or a hypothesis as an ideal yes/no question with
+  the cheapest contract left after the answer (`"partner: DA CK @5S"`). Per reply: its chance, P(H) after it, the
+  best contract still reachable (5 of the suit added as the sign-off), and asking then placing the contract against
+  bidding now. `--scoring imps|mp|total`; `--json` writes the results.
+
+The example (dealer South, none vulnerable, partner raised 1S to 2S): P(partner has DA and CK) = 11%; if so 6S
+makes 99% and gains 10.8 IMPs over 4S, if not it loses 1.9, so 6S is right above 15% and the odds say 4S; knowing
+it for certain is worth +1.2 IMPs. RKCB is worth +1.2 here (the 5C reply makes slam 70%, 5D leaves 5S), while the
+ideal "DA and CK?" question with 5S as the floor gains only +0.07: the yes is too rare to pay for the level. After
+1S p 3S p the same hand bids 6S by the odds (86%) and no question changes it.
+
+**On the real deals (`keycards_ask.py`, seconds, from keycards.py's saved sets of `v1-brill` / `v1`).** The
+game-or-slam decisions of keycards.py in a suit with the auction below 4NT; IMPs a decision against choosing by the
+odds now, double dummy, test boards / earlier boards (output `keycards\ask.txt` in the data folder):
+
+| | `test` (81 decisions, 32 boards) | `train-v1` (406 decisions, 204 boards) |
+|---|---|---|
+| RKCB every time, then 5 or 6 by the odds after the reply | -0.84 +-2.74 | -1.10 +-1.25 |
+| the reply known, game still possible | +0.98 +-1.87 | +0.97 +-0.84 |
+| 5 instead of game, no reply (cost of the room) | -1.28 +-1.13 | -2.24 +-0.74 |
+| RKCB only where the drawn deals say it pays (asked on 23% / 28%) | +0.46 +-0.49 | +0.21 +-0.54 |
+| what the drawn deals said that would gain | +0.11 | +0.17 |
+| keycards.py's key set known for certain | +0.56 +-1.66 | +0.74 +-0.95 |
+| the right contract known (ceiling) | +4.43 +-2.41 | +4.21 +-0.96 |
+| replies said -> true: 1 or 4, 0 or 3, 2 no queen, 2 and queen | 35/34/9/22% -> 49/16/2/33% | 45/22/10/23% -> 44/19/9/28% |
+
+- The reply odds are honest on the larger sample (within 5 points each).
+- The keycard reply as information is worth about 1 IMP a decision, as much as the best key set, but the room it
+  takes costs more when the answer is "stay low": asked every time it loses 1 IMP a decision.
+- Asked only where the tool says it pays, it gains +0.2 to +0.5 IMPs a decision (not clear of zero), close to what
+  the drawn deals predicted. These decisions come up on about 9% of boards, so over all boards the gain is small.
+- Limits: double dummy; one keycard step (no queen ask, no king ask, no cue bids); partner's reply read from the
+  real hand, not from a robot; the opponents' calls count as much as the model learned they tell, with no setting to
+  trust them less; slam odds from sampled deals ran high on Brill boards (above).
 
 ## Calls by purpose (2026-11-18)
 
