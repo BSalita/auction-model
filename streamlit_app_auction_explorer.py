@@ -74,8 +74,10 @@ LIVE_RULES = ("double", "sacrifice")                 # the rules whose calls the
 GAME_VULS = ("None", "NS", "EW", "Both")             # the order of the vulnerability in a packed board
 GAME_FROM = {"acbl": "ACBL Postmortem", "ffbridge": "FFBridge Postmortem", "bridgewebs": "BridgeWebs Postmortem",
              "pbn": "PBN/LIN Postmortem", "brill": "Brill Postmortem"}
-ROBOT_SYSTEMS = {"GIB (2/1)": "21GF-GIB", "SAYC": "SAYC"}   # the names BEN's API knows the systems by
-GAME_FIRST_SYSTEM = {"ffbridge": "SAYC"}             # the system chosen at first, by ?from=; the others start on GIB
+ROBOT_SYSTEMS = {"GIB 2/1": "21GF-GIB", "SAYC": "SAYC", "SEF": "SEF"}   # the names BEN's API knows the systems by
+GAME_FIRST_SYSTEM = {"ffbridge": "SEF"}              # the system chosen at first, by ?from=; the others start on GIB
+SYSTEM_HELP = ("GIB 2/1 = 2/1 game force as the GIB robots on BBO bid it, SAYC = Standard American Yellow Card, "
+               "SEF = Standard Français (the French federation's five-card-major system).")
 AI_AUCTION_NOTE = ("AI auction: the calls four robots reach on this board, each seeing only its own hand. "
                    "It is not the auction at any table of your game.")
 
@@ -489,15 +491,17 @@ with st.sidebar:
         st.markdown(f"**Your game**  \n{len(game)} boards from {game_from}")
     else:
         source = st.radio("Deal", ["A Brill board", "My own deal"] if have_boards else ["My own deal"], horizontal=True)
+    robots = source == "Your game"                   # the auction shown is the one BEN's robots reach on the board
+    # a game from FFBridge starts on SEF (Standard Français, as most French pairs play), the others on GIB's 2/1
+    first_system = GAME_FIRST_SYSTEM.get(st.query_params.get("from", ""), "GIB 2/1") if robots else "GIB 2/1"
+    system = ROBOT_SYSTEMS[st.radio("Bidding system", list(ROBOT_SYSTEMS), horizontal=True,
+                                    index=list(ROBOT_SYSTEMS).index(first_system),
+                                    help=("The system all four robots bid, and the one the meanings of the calls are read by. "
+                                          if robots else "The system the meanings of the calls (the tooltips) are read by. ")
+                                         + SYSTEM_HELP)]
     if source == "Your game":
         board = st.selectbox("Board", game, format_func=lambda b: f"Board {b['board']}  ({b['dealer']} deals, {b['vul']} vul)")
         actual = board.get("played")
-        # a game from FFBridge starts on SAYC (five-card majors, as most French pairs play), the others on GIB's 2/1
-        first_system = GAME_FIRST_SYSTEM.get(st.query_params.get("from", ""), "GIB (2/1)")
-        system = ROBOT_SYSTEMS[st.radio("The robots bid", list(ROBOT_SYSTEMS), horizontal=True,
-                                        index=list(ROBOT_SYSTEMS).index(first_system),
-                                        help="The system all four robots bid: GIB = 2/1 game force as the GIB robots on BBO "
-                                             "bid it, SAYC = Standard American Yellow Card.")]
         matchpoint = st.radio("Scoring", ["Matchpoints", "IMPs"], horizontal=True) == "Matchpoints"
         asked_seat = st.query_params.get("seat", "S")
         seat = st.radio("Player direction", list("NSEW"), index="NSEW".index(asked_seat) if asked_seat in list("NSEW") else 1, horizontal=True)
@@ -591,7 +595,7 @@ with left:
         st.markdown(hand_html(hand, SEAT_NAME[seat], True, side_vul(vul, seat)), unsafe_allow_html=True)
     st.caption(f"{SEAT_NAME[dealer]} deals, vulnerable: {vul}, {'matchpoints' if matchpoint else 'IMPs'}.")
 with right:
-    if system:                                       # a board of the visitor's game, bid by the robots
+    if robots:                                       # a board of the visitor's game, bid by the robots
         st.caption(AI_AUCTION_NOTE)
     shows = meanings(dealer, vul, calls, system)
     tips = []
@@ -616,7 +620,7 @@ with right:
     bidding_box(seen, dealer, finished, edited, differs_at)
 
 current = contract_of(list(seen), dealer)
-if system:
+if robots:
     # A board of the visitor's game: what was really played there, kept apart from what the robots bid.
     st.markdown("**In your game**")
     real = st.columns(4)
@@ -638,7 +642,7 @@ if current:
     p = now["dd"][rel, STRAINS.index(strain)]
     score = float((p * infer.SCORE[level - 1, STRAINS.index(strain), dbl, int(side_vul(vul, decl))]).sum())
     name = f"{level}{SYMBOL[strain]}{'x' * dbl} by {SEAT_NAME[decl]}"
-    top[1].metric("AI contract so far" if system else "Contract so far", name)
+    top[1].metric("AI contract so far" if robots else "Contract so far", name)
     top[2].metric("Chance it makes", f"{p[level + 6:].sum():.0%}")
     top[3].metric(f"Its expected score for {my_side[0]}-{my_side[1]}", f"{(score if decl in my_side else -score):+.0f}")
 if reveal and table:
