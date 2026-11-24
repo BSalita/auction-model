@@ -18,8 +18,12 @@ Where things are found (environment variables, each optional):
   AUCTION_MODEL_TORCH      folder holding the torch package if it is not importable
   AUCTION_EXPLORER_FIELD   Brill field file (default ../data/brill-replay/field.jsonl)
   AUCTION_EXPLORER_DD      double-dummy results of those boards (default ../data/brill-replay/board-table/dd.json)
-  AUCTION_EXPLORER_BEN_API BEN's REST API, asked what each call shows (default https://morty.7nt.info/gameapi/8085;
-                           empty = no meanings in the tooltips)
+  AUCTION_EXPLORER_BEN_API BEN's REST API, asked what each call shows and for the anticipated opening leads
+                           (default https://morty.7nt.info/gameapi/8085; empty = no meanings and no leads)
+
+Anticipated leads: the opening lead Morty's lead routine (BEN's /lead) makes from the leader's real hand, against
+the contract of the auction shown (always) and against each forecast contract of the two tables (on request: about
+2 seconds a contract). The model's own forecasts are double dummy and do not use a lead.
 """
 import base64
 import concurrent.futures
@@ -29,6 +33,7 @@ import pathlib
 import re
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -330,6 +335,56 @@ def meanings(dealer, vul, calls, system=None):
     return [store.get(k, "") for k in keys]
 
 
+def show_card(card):
+    """'D7' -> '♦7', 'Dx' -> '♦x' (a small card)."""
+    return SYMBOL[card[0]] + card[1:] if card and card[0] in "SHDC" else (card or "")
+
+
+def lead_auction(seen, dealer, level, strain, declarer):
+    """A finished auction ending in `level strain` played by `declarer`, keeping as much of `seen` as it can: the
+    calls seen are cut back until the contract can still be bid and `declarer` would be the one to play it, then
+    come the passes up to the declarer, the bid, and three passes. With nothing left of `seen` the declarer simply
+    bids the contract at the first turn."""
+    bid, prefix = f"{level}{strain}", list(seen)
+    while True:
+        passes = (SEATS.index(declarer) - SEATS.index(dealer) - len(prefix)) % 4
+        if not any(over(prefix + ["PASS"] * k) for k in range(passes + 1)):
+            full = prefix + ["PASS"] * passes + [bid]
+            if check_auction(full)[1] is None and contract_of(full, dealer)[3] == declarer:
+                return full + ["PASS"] * 3
+        if not prefix:
+            return None
+        prefix.pop()
+
+
+def robot_lead(hand, seat, dealer, vul, calls, system, matchpoint):
+    """The opening lead Morty's lead routine (BEN's /lead service) makes from `hand` after the finished auction
+    `calls`: (card, [(card, the lead network's share of it), ...]), or None when the service does not answer.
+    About 1.5 seconds the first time; kept for all sessions afterwards. After a failure the service is left alone
+    for a minute."""
+    store = meaning_store()
+    key = ("lead", hand, seat, dealer, vul, tuple(calls), system, matchpoint)
+    if key not in store:
+        if not BEN_API or time.time() - store.get("lead_down", 0.0) <= 60:
+            return None
+        to_ctx = {"PASS": "--", "X": "Db", "XX": "Rd"}
+        asked = {"hand": hand, "seat": seat, "dealer": dealer, "vul": vul, "ctx": "".join(to_ctx.get(c, c) for c in calls),
+                 "details": "true", "matchtype": "MP" if matchpoint else "IMP"}
+        if system:
+            asked.update(ourSystem=system, theirSystem=system)
+        request = urllib.request.Request(f"{BEN_API}/lead?{urllib.parse.urlencode(asked)}", headers={"User-Agent": "auction-explorer"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as answer:
+                told = json.load(answer)
+            store[key] = (told["card"], [(c["card"], float(c.get("insta_score") or 0.0)) for c in (told.get("candidates") or [])[:4]])
+        except urllib.error.HTTPError:               # the service refused this position: asking again will not help
+            store[key] = None
+        except Exception:
+            store["lead_down"] = time.time()
+            return None
+    return store[key]
+
+
 def auction_grid(calls, step, dealer, seat, vul, tips):
     """The auction as four columns of buttons (West first); a click on a call shows the auction up to that call.
     tips: the text shown when the pointer rests on each call."""
@@ -375,7 +430,8 @@ def contracts_table(dd, seat, vul, side):
                 score = float((p * infer.SCORE[level - 1, si, 0, int(side_vul(vul, decl))]).sum())
                 if best is None or score > best[0]:
                     best = (score, float(p[level + 6:].sum()), decl)
-            rows.append({"Contract": f"{level}{SYMBOL[strain]}", "By": SEAT_NAME[best[2]], "Makes": best[1], "Expected score": best[0]})
+            rows.append({"Contract": f"{level}{SYMBOL[strain]}", "By": SEAT_NAME[best[2]], "Makes": best[1], "Expected score": best[0],
+                         "_level": level, "_strain": strain, "_declarer": best[2]})   # the last three are not shown
     return pd.DataFrame(rows).sort_values("Expected score", ascending=False).head(6).reset_index(drop=True)
 
 
@@ -620,6 +676,22 @@ with right:
     bidding_box(seen, dealer, finished, edited, differs_at)
 
 current = contract_of(list(seen), dealer)
+
+
+def anticipated_lead(declarer, auction):
+    """('lead', (card, shares)) for the lead against the contract of the finished `auction`; ('hidden', None) when
+    the leader's hand is one the visitor has not chosen to see; ('unknown', None) when the page does not have that
+    hand; ('none', None) when the lead service gave no answer."""
+    leader = SEATS[(SEATS.index(declarer) + 1) % 4]
+    leader_hand = deal[leader] if deal else hand if leader == seat else None
+    if leader_hand is None:
+        return "unknown", None
+    if not (reveal or robots or leader == seat):
+        return "hidden", None
+    got = robot_lead(leader_hand, leader, dealer, vul, auction, system, matchpoint)
+    return ("lead", got) if got else ("none", None)
+
+
 if robots:
     # A board of the visitor's game: what was really played there, kept apart from what the robots bid.
     st.markdown("**In your game**")
@@ -645,6 +717,18 @@ if current:
     top[1].metric("AI contract so far" if robots else "Contract so far", name)
     top[2].metric("Chance it makes", f"{p[level + 6:].sum():.0%}")
     top[3].metric(f"Its expected score for {my_side[0]}-{my_side[1]}", f"{(score if decl in my_side else -score):+.0f}")
+    # the opening lead Morty's lead routine makes against this contract, from the leader's real hand
+    kind, got = anticipated_lead(decl, list(seen) + ["PASS"] * next(k for k in range(4) if over(list(seen) + ["PASS"] * k)))
+    leader = SEAT_NAME[SEATS[(SEATS.index(decl) + 1) % 4]]
+    if kind == "lead":
+        others = ", ".join(f"{show_card(c)} {share:.0%}" for c, share in sorted(got[1], key=lambda x: -x[1]))
+        st.caption(f"Anticipated lead against {name}: **{show_card(got[0])}** by {leader}."
+                   + (f" The lead network's shares: {others}." if others else ""))
+    elif kind == "hidden":
+        st.caption(f"Anticipated lead against {name}: chosen from {leader}'s real hand, so it is shown once "
+                   "'Show the hidden hands and the real results' is ticked.")
+    elif kind == "unknown":
+        st.caption(f"Anticipated lead against {name}: not available, {leader}'s hand is not known.")
 if reveal and table:
     st.markdown("**What really happened at this table**" + (" (with its real auction, not your edited one)" if edited else ""))
     real = st.columns(4)
@@ -681,11 +765,33 @@ with tab_tricks:
         # the real double-dummy tricks are known for Brill boards only, so only there is the box worth pointing at
         cols[1].caption("The model's average tricks; darker = more."
                         + (" Tick the sidebar box to compare with the real deal." if truth else ""))
+    want_leads = st.checkbox("Anticipated leads", key="leads", disabled=not BEN_API,
+                             help="Adds to each contract below the opening lead Morty's lead routine makes against it, "
+                                  "from the leader's real hand. About 2 seconds a contract the first time.")
     cols = st.columns(2)
+    hidden_lead = False
     for col, side in zip(cols, (my_side, their_side)):
         col.markdown(f"**Best contracts for {side[0]}-{side[1]}**")   # undoubled, ordered by the Expected score column
-        col.dataframe(contracts_table(now["dd"], seat, vul, side).style.format({"Makes": "{:.0%}", "Expected score": "{:+.0f}"})
+        best = contracts_table(now["dd"], seat, vul, side)
+        shown_table = best[["Contract", "By", "Makes", "Expected score"]].copy()
+        if want_leads:
+            leads = []
+            with st.spinner("Asking the robot for its leads ..."):
+                for row in best.to_dict("records"):
+                    auction = lead_auction(seen, dealer, row["_level"], row["_strain"], row["_declarer"])
+                    kind, got = anticipated_lead(row["_declarer"], auction) if auction else ("none", None)
+                    leader = SEATS[(SEATS.index(row["_declarer"]) + 1) % 4]
+                    hidden_lead |= kind == "hidden"
+                    leads.append(f"{show_card(got[0])} by {leader}" if kind == "lead" else
+                                 "hidden" if kind == "hidden" else "hand not known" if kind == "unknown" else "")
+            shown_table["Lead"] = leads
+        col.dataframe(shown_table.style.format({"Makes": "{:.0%}", "Expected score": "{:+.0f}"})
                       .map(shade(0, 1), subset=["Makes"]), width="stretch", hide_index=True)
+    if want_leads:
+        st.caption("Lead: the card Morty's lead routine makes from the leader's real hand, after the auction shown cut back "
+                   "and completed so that it ends in that contract. Makes and Expected score are double dummy and do not "
+                   "depend on it." + (" 'hidden' leads come from a hand you have not chosen to see: tick 'Show the hidden "
+                                      "hands and the real results'." if hidden_lead else ""))
 
 with tab_par:
     trend = pd.DataFrame({"Calls seen": range(n + 1), "Expected par": history,
