@@ -155,6 +155,7 @@ The later sections measure the models in BEN's bidding. Those need more than the
 | `hypothesis.py` | One position: P(a hypothesis about the hidden hands), contracts' value with and without it, value of asking bids |
 | `keycards_ask.py` | Value of RKCB at the game-or-slam decisions of `keycards.py`, on the real Brill deals |
 | `scoring.py` | Duplicate score table |
+| `lead_forecast.py` | Explorer page: tricks after the anticipated opening lead (deals drawn from the model, BEN's lead network and a double-dummy solve of every lead, in a helper process) |
 | `post.sh` | Runs the held-out checks when a training run ends |
 | `split_brill.py` | Brill deals by date -> `brill_train.npz`, `brill_test.npz`, and the BBO + Brill `mix_train.npz` |
 | `ft.sh`, `ft2.sh` | The Brill fine-tuning trials (`train.py --init RUN/model.pt --train-file ...`) |
@@ -649,6 +650,15 @@ where the missing honors and suit lengths probably are, and the calls the purpos
   `ops/AUCTION_EXPLORER.md`, `ops/publish_auction_explorer.ps1`. The Brill boards on prod are as of the last publish.
 - Tested headlessly with `streamlit.testing.v1.AppTest`: every step of a 14-call auction, all four seats' tabs, own
   deal, and the messages for a bad hand, a bad call and an illegal auction.
+
+With "Anticipated leads" ticked (since 2026-11-24) the page also shows each contract's forecast after the
+anticipated lead: "Makes after lead" and "Score after lead" in the two tables of best contracts, and a line
+under the contract of the auction shown. The model's forecast is double dummy (the defence finds its best
+lead); `lead_forecast.py` draws 100 deals from the model, gives every lead the leader can make the share of
+BEN's lead network, solves each double dummy, and the page shifts the model's forecast by the difference to
+the best lead on the same deals. On the played tables of the Brill events double dummy is 0.11 tricks too low
+for declarer and the after-lead figure 0.17 too high, so the truth lies between the two columns. The helper
+runs only where BEN is installed (the `ben` image); elsewhere the page says so.
 
 ## More Brill rows: `v1-brill-all` (2026-11-19)
 

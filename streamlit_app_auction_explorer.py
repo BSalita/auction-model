@@ -24,6 +24,12 @@ Where things are found (environment variables, each optional):
 Anticipated leads: the opening lead Morty's lead routine (BEN's /lead) makes from the leader's real hand, against
 the contract of the auction shown (always) and against each forecast contract of the two tables (on request: about
 2 seconds a contract). The model's own forecasts are double dummy and do not use a lead.
+
+Forecast after the anticipated lead (with the 'Anticipated leads' box ticked): the model's chance of making and
+expected score of a contract, shifted by what the lead changes on 100 deals drawn from the model: every lead the
+leader can make, by the share BEN's lead network gives it, solved double dummy, against the defence's best lead on
+the same deal. Done by lead_forecast.py in a helper process running BEN's code, so only where BEN is installed
+(BEN_ROOT, default /opt/ben: the ben image); elsewhere the page says it is not available.
 """
 import base64
 import concurrent.futures
@@ -55,6 +61,7 @@ except ImportError:
     import torch
 sys.path.insert(0, str(HERE))
 import infer  # noqa: E402
+import lead_forecast  # noqa: E402
 import tactical  # noqa: E402
 
 SEATS = "NESW"
@@ -114,6 +121,56 @@ def detail(run, hand, seat, dealer, vul, calls, matchpoint, to_call):
         except Exception as error:                   # an auction the rules were not written for
             problem = f"{type(error).__name__}: {error}"
     return honors, lengths, named, context, problem
+
+
+LEAD_DEALS = 100                                     # deals drawn from the model for the forecast after the lead
+
+
+@st.cache_resource(show_spinner="Starting Morty's lead network ...")
+def lead_helper():
+    """The process that runs BEN's lead network and the double-dummy solver (lead_forecast.py), or the reason
+    there is none on this machine."""
+    try:
+        return lead_forecast.Helper()
+    except Exception as error:
+        return f"{type(error).__name__}: {error}"
+
+
+@st.cache_data(show_spinner=False, max_entries=600)
+def lead_view(run, hand, seat, dealer, vul, calls, cases):
+    """What the anticipated opening lead changes for each contract of `cases` ((level, strain, declarer, finished
+    auction), ...): {(level, strain, declarer): (trick probabilities after the defence's best lead, after the
+    anticipated lead, the lead network's share of each suit)} over LEAD_DEALS deals drawn from the model at the
+    position after `calls`. A string instead when the helper is not available."""
+    helper = lead_helper()
+    if isinstance(helper, str):
+        return helper
+    torch.manual_seed(0)
+    pos = predictor(run).position(hand, seat, dealer, vul, list(calls))
+    deals = lead_forecast.sample_deals(pos, hand, seat, LEAD_DEALS, np.random.default_rng(0))
+    try:
+        answers = helper.ask(deals, dealer, [bool(side_vul(vul, "N")), bool(side_vul(vul, "E"))],
+                             [{"auction": list(auction)} for *_, auction in cases])
+    except Exception as error:
+        return f"{type(error).__name__}: {str(error)[-300:]}"
+    out = {}
+    for (level, strain, declarer, _), a in zip(cases, answers):
+        if a and a["contract"][:2] == f"{level}{strain}" and a["contract"][-1] == declarer:
+            out[(level, strain, declarer)] = (np.array(a["dd"]), np.array(a["lead"]), a["suits"])
+    return out
+
+
+def after_lead(view, level, strain, dbl, declarer, makes, score):
+    """The model's chance of making and expected score of a contract, shifted by what the anticipated lead changes
+    on the drawn deals: (makes, score, tricks gained), or None."""
+    got = view.get((level, strain, declarer)) if isinstance(view, dict) else None
+    if got is None:
+        return None
+    dd, lead, _ = got
+    points = infer.SCORE[level - 1, STRAINS.index(strain), dbl, int(side_vul(vul, declarer))]
+    return (float(np.clip(makes + lead[level + 6:].sum() - dd[level + 6:].sum(), 0, 1)),
+            float(score + (lead * points).sum() - (dd * points).sum()),
+            float(((lead - dd) * np.arange(14)).sum()))
 
 
 # ---- bridge helpers -------------------------------------------------------------------------------------
@@ -718,8 +775,21 @@ if current:
     top[2].metric("Chance it makes", f"{p[level + 6:].sum():.0%}")
     top[3].metric(f"Its expected score for {my_side[0]}-{my_side[1]}", f"{(score if decl in my_side else -score):+.0f}")
     # the opening lead Morty's lead routine makes against this contract, from the leader's real hand
-    kind, got = anticipated_lead(decl, list(seen) + ["PASS"] * next(k for k in range(4) if over(list(seen) + ["PASS"] * k)))
+    ended = list(seen) + ["PASS"] * next(k for k in range(4) if over(list(seen) + ["PASS"] * k))
+    kind, got = anticipated_lead(decl, ended)
     leader = SEAT_NAME[SEATS[(SEATS.index(decl) + 1) % 4]]
+    if st.session_state.get("leads"):
+        # with 'Anticipated leads' ticked: what the lead changes for this contract, on deals drawn from the model
+        with st.spinner("Solving the drawn deals after each lead ..."):
+            view = lead_view(run, hand, seat, dealer, vul, seen, ((level, strain, decl, tuple(ended)),))
+        shifted = after_lead(view, level, strain, dbl, decl, float(p[level + 6:].sum()), score)
+        if shifted:
+            suits = view[(level, strain, decl)][2]
+            st.caption(f"After the anticipated lead {name} makes **{shifted[0]:.0%}** and scores "
+                       f"**{(shifted[1] if decl in my_side else -shifted[1]):+.0f}** for {my_side[0]}-{my_side[1]} "
+                       f"({shifted[2]:+.2f} tricks for declarer against the defence's best lead). {leader}'s lead by "
+                       "Morty's lead network, over the deals drawn: "
+                       + ", ".join(f"{SYMBOL[s]} {share:.0%}" for s, share in zip("SHDC", suits)) + ".")
     if kind == "lead":
         others = ", ".join(f"{show_card(c)} {share:.0%}" for c, share in sorted(got[1], key=lambda x: -x[1]))
         st.caption(f"Anticipated lead against {name}: **{show_card(got[0])}** by {leader}."
@@ -765,33 +835,63 @@ with tab_tricks:
         # the real double-dummy tricks are known for Brill boards only, so only there is the box worth pointing at
         cols[1].caption("The model's average tricks; darker = more."
                         + (" Tick the sidebar box to compare with the real deal." if truth else ""))
-    want_leads = st.checkbox("Anticipated leads", key="leads", disabled=not BEN_API,
-                             help="Adds to each contract below the opening lead Morty's lead routine makes against it, "
-                                  "from the leader's real hand. About 2 seconds a contract the first time.")
-    cols = st.columns(2)
-    hidden_lead = False
-    for col, side in zip(cols, (my_side, their_side)):
+    want_leads = st.checkbox("Anticipated leads", key="leads",
+                             help="Adds to each contract below the opening lead Morty's lead routine makes against it "
+                                  "from the leader's real hand, and the model's forecast after the anticipated lead. "
+                                  "Up to half a minute the first time.")
+    # with the leads the tables are wider: one under the other
+    cols = [st.container(), st.container()] if want_leads else st.columns(2)
+    hidden_lead, view = False, None
+    best_tables = [(side, contracts_table(now["dd"], seat, vul, side)) for side in (my_side, their_side)]
+    if want_leads:
+        cases = []
+        for _, best in best_tables:
+            for row in best.to_dict("records"):
+                auction = lead_auction(seen, dealer, row["_level"], row["_strain"], row["_declarer"])
+                if auction:
+                    cases.append((row["_level"], row["_strain"], row["_declarer"], tuple(auction)))
+        with st.spinner("Solving the drawn deals after each lead ..."):
+            view = lead_view(run, hand, seat, dealer, vul, seen, tuple(cases))
+    for col, (side, best) in zip(cols, best_tables):
         col.markdown(f"**Best contracts for {side[0]}-{side[1]}**")   # undoubled, ordered by the Expected score column
-        best = contracts_table(now["dd"], seat, vul, side)
         shown_table = best[["Contract", "By", "Makes", "Expected score"]].copy()
+        formats = {"Makes": "{:.0%}", "Expected score": "{:+.0f}"}
         if want_leads:
-            leads = []
+            leads, makes, scores = [], [], []
             with st.spinner("Asking the robot for its leads ..."):
                 for row in best.to_dict("records"):
                     auction = lead_auction(seen, dealer, row["_level"], row["_strain"], row["_declarer"])
-                    kind, got = anticipated_lead(row["_declarer"], auction) if auction else ("none", None)
+                    kind, got = anticipated_lead(row["_declarer"], auction) if auction and BEN_API else ("none", None)
                     leader = SEATS[(SEATS.index(row["_declarer"]) + 1) % 4]
                     hidden_lead |= kind == "hidden"
                     leads.append(f"{show_card(got[0])} by {leader}" if kind == "lead" else
                                  "hidden" if kind == "hidden" else "hand not known" if kind == "unknown" else "")
-            shown_table["Lead"] = leads
-        col.dataframe(shown_table.style.format({"Makes": "{:.0%}", "Expected score": "{:+.0f}"})
-                      .map(shade(0, 1), subset=["Makes"]), width="stretch", hide_index=True)
+                    shifted = after_lead(view, row["_level"], row["_strain"], 0, row["_declarer"], row["Makes"], row["Expected score"])
+                    makes.append(shifted[0] if shifted else None)
+                    scores.append(shifted[1] if shifted else None)
+            if isinstance(view, dict):
+                shown_table["Makes after lead"], shown_table["Score after lead"] = makes, scores
+                formats.update({"Makes after lead": "{:.0%}", "Score after lead": "{:+.0f}"})
+            if BEN_API:
+                shown_table["Lead"] = leads
+        makes_columns = [c for c in ("Makes", "Makes after lead") if c in shown_table]
+        col.dataframe(shown_table.style.format(formats, na_rep="").map(shade(0, 1), subset=makes_columns),
+                      width="stretch", hide_index=True)
     if want_leads:
-        st.caption("Lead: the card Morty's lead routine makes from the leader's real hand, after the auction shown cut back "
-                   "and completed so that it ends in that contract. Makes and Expected score are double dummy and do not "
-                   "depend on it." + (" 'hidden' leads come from a hand you have not chosen to see: tick 'Show the hidden "
-                                      "hands and the real results'." if hidden_lead else ""))
+        if isinstance(view, dict):
+            st.caption(f"Makes after lead, Score after lead: the model's forecast shifted by what the anticipated lead changes "
+                       f"on {LEAD_DEALS} deals drawn from the model. On each deal every lead the leader can make counts by "
+                       "the share Morty's lead network gives it and is solved double dummy; the shift is that result against "
+                       "the defence's best lead on the same deal. Makes and Expected score stay double dummy. At Brill's "
+                       "tables real declarers take 0.11 tricks more than double dummy and 0.17 fewer than the after-lead "
+                       "figure, so the truth lies between the two.")
+        else:
+            st.caption(f"The forecast after the lead is not available here: {view}")
+        if BEN_API:
+            st.caption("Lead: the card Morty's lead routine makes from the leader's real hand, after the auction shown cut "
+                       "back and completed so that it ends in that contract."
+                       + (" 'hidden' leads come from a hand you have not chosen to see: tick 'Show the hidden hands and "
+                          "the real results'." if hidden_lead else ""))
 
 with tab_par:
     trend = pd.DataFrame({"Calls seen": range(n + 1), "Expected par": history,

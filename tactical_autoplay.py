@@ -3,13 +3,15 @@
 and the two results are compared.
 
   elo/.venv/Scripts/python.exe auction-model/tactical_autoplay.py play --deals DEALS.jsonl --base BASE/replay.jsonl \
-      --new NEW/replay.jsonl --out OUT.jsonl [--limit N] [--after-autoplay]
+      --new NEW/replay.jsonl --out OUT.jsonl [--limit N] [--after-autoplay] [--give-way]
   elo/.venv/Scripts/python.exe auction-model/tactical_autoplay.py report --deals DEALS.jsonl --dd dd.json --out OUT.jsonl
 
 play: one request at a time, about a minute each. Deals in a fixed random order, the baseline's contract and the
 new one of a deal back to back, so an unfinished run is an unbiased sample of pairs. Can be started again: what
 is in OUT is skipped; a contract that failed twice is left out. --after-autoplay waits until no other
 brill_autoplay / tactical_autoplay process runs on this machine (the service is asked one board at a time).
+--give-way makes the same check before every request, so a long run steps aside while the daily leaderboard
+job (brill_autoplay.py) plays its boards.
 """
 import argparse
 import json
@@ -94,6 +96,12 @@ def stage_play(a):
             if contract_of(walk, board["dealer"]) is None:
                 row.update({"contract": "PASS", "declarer": None, "tricks": 0, "ns_score": 0})
             else:
+                if a.give_way and others_running():
+                    print(f"{time.strftime('%H:%M:%S')}  another autoplay job is running: waiting", flush=True)
+                    while others_running():
+                        time.sleep(60)
+                    print(f"{time.strftime('%H:%M:%S')}  going on", flush=True)
+                    t0 = time.time()
                 try:
                     r = brill_autoplay.autoplay(board, walk)
                     row.update({x: r[x] for x in ("contract", "declarer", "tricks", "ns_score", "service_ns_score")})
@@ -185,6 +193,7 @@ if __name__ == "__main__":
         p.add_argument("--" + k, required=True)
     p.add_argument("--limit", type=int, default=0)
     p.add_argument("--after-autoplay", action="store_true")
+    p.add_argument("--give-way", action="store_true")
     r = sub.add_parser("report")
     for k in ("deals", "dd", "out"):
         r.add_argument("--" + k, required=True)
