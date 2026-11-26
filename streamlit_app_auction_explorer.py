@@ -63,6 +63,7 @@ sys.path.insert(0, str(HERE))
 import infer  # noqa: E402
 import lead_forecast  # noqa: E402
 import tactical  # noqa: E402
+import why_call  # noqa: E402
 
 SEATS = "NESW"
 SEAT_NAME = {"N": "North", "E": "East", "S": "South", "W": "West"}
@@ -731,6 +732,9 @@ with right:
     else:
         st.caption(chosen + f"{SEAT_NAME[to_call]} to call." + tail)
     bidding_box(seen, dealer, finished, edited, differs_at)
+    # Morty's reasoning for the selected call, when the visitor may see the hand that made it (as for the leads)
+    why_call.panel(BEN_API, seen, dealer, vul, deal if deal else {seat: hand},
+                   lambda s: s == seat or reveal or robots, system, matchpoint, seen[-1] if seen else None)
 
 current = contract_of(list(seen), dealer)
 
