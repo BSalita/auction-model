@@ -27,7 +27,7 @@ the contract of the auction shown (always) and against each forecast contract of
 
 Forecast after the anticipated lead (with the 'Anticipated leads' box ticked): the model's chance of making and
 expected score of a contract, shifted by what the lead changes on 100 deals drawn from the model: every lead the
-leader can make, by the share BEN's lead network gives it, solved double dummy, against the defence's best lead on
+leader can make, by the share BEN's lead network gives it, solved double dummy, against the defense's best lead on
 the same deal. Done by lead_forecast.py in a helper process running BEN's code, so only where BEN is installed
 (BEN_ROOT, default /opt/ben: the ben image); elsewhere the page says it is not available.
 """
@@ -140,7 +140,7 @@ def lead_helper():
 @st.cache_data(show_spinner=False, max_entries=600)
 def lead_view(run, hand, seat, dealer, vul, calls, cases):
     """What the anticipated opening lead changes for each contract of `cases` ((level, strain, declarer, finished
-    auction), ...): {(level, strain, declarer): (trick probabilities after the defence's best lead, after the
+    auction), ...): {(level, strain, declarer): (trick probabilities after the defense's best lead, after the
     anticipated lead, the lead network's share of each suit)} over LEAD_DEALS deals drawn from the model at the
     position after `calls`. A string instead when the helper is not available."""
     helper = lead_helper()
@@ -791,7 +791,7 @@ if current:
             suits = view[(level, strain, decl)][2]
             st.caption(f"After the anticipated lead {name} makes **{shifted[0]:.0%}** and scores "
                        f"**{(shifted[1] if decl in my_side else -shifted[1]):+.0f}** for {my_side[0]}-{my_side[1]} "
-                       f"({shifted[2]:+.2f} tricks for declarer against the defence's best lead). {leader}'s lead by "
+                       f"({shifted[2]:+.2f} tricks for declarer against the defense's best lead). {leader}'s lead by "
                        "Morty's lead network, over the deals drawn: "
                        + ", ".join(f"{SYMBOL[s]} {share:.0%}" for s, share in zip("SHDC", suits)) + ".")
     if kind == "lead":
@@ -886,7 +886,7 @@ with tab_tricks:
             st.caption(f"Makes after lead, Score after lead: the model's forecast shifted by what the anticipated lead changes "
                        f"on {LEAD_DEALS} deals drawn from the model. On each deal every lead the leader can make counts by "
                        "the share Morty's lead network gives it and is solved double dummy; the shift is that result against "
-                       "the defence's best lead on the same deal. Makes and Expected score stay double dummy. At Brill's "
+                       "the defense's best lead on the same deal. Makes and Expected score stay double dummy. At Brill's "
                        "tables real declarers take 0.11 tricks more than double dummy and 0.17 fewer than the after-lead "
                        "figure, so the truth lies between the two.")
         else:
